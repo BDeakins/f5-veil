@@ -108,12 +108,14 @@ def test_brace_description_redacted_to_placeholder():
     assert diag.unredacted_description == []
 
 
-def test_qstring_containing_ledger_original_logs_diagnostic():
-    # v0.0.12: QSTRINGs inside ``ltm rule`` bodies now get substring
-    # substitution, so the diagnostic is now scoped to non-iRule
-    # QSTRINGs (monitor send-strings, etc., where probe payloads may
-    # legitimately need original bytes). The diagnostic-fires-and-text-
-    # passes-through contract is preserved for that context.
+def test_qstring_containing_ledger_original_gets_substituted():
+    # v0.0.14: every QSTRING gets full substring substitution against
+    # the ledger — both inside ``ltm rule`` bodies and outside. The
+    # legacy ``qstring_contains_identifier`` diagnostic (which used to
+    # fire as a "you have a leak here" warning) no longer fires because
+    # the leak surface is now actively redacted. Monitor send-strings
+    # would also be substituted — the sanitized output isn't deployed
+    # to live BIG-IP, so probe-payload concerns don't apply.
     src = (
         "ltm pool /Common/foo {\n"
         "}\n"
@@ -122,9 +124,9 @@ def test_qstring_containing_ledger_original_logs_diagnostic():
         "}\n"
     )
     sanitized, diag = _scan_and_substitute(src)
-    assert len(diag.qstring_contains_identifier) >= 1
-    # Non-iRule QSTRING content is emitted verbatim.
-    assert '"see /Common/foo for ref"' in sanitized
+    assert "/Common/foo " not in sanitized  # original path gone
+    assert '"see /Common/POOL_0001 for ref"' in sanitized
+    assert diag.qstring_contains_identifier == []
 
 
 def test_orphan_entry_surfaces_when_pass2_finds_no_reference():

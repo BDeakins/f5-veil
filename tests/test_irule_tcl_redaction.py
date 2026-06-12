@@ -398,11 +398,13 @@ def test_irule_qstring_builtin_profile_not_substituted_from_string():
     assert restored == src
 
 
-def test_qstring_outside_irule_body_unchanged_diagnostic_fires():
-    """A QSTRING in a non-iRule context (monitor send-string) keeps the
-    legacy verbatim emit + qstring_contains_identifier diagnostic. This
-    is the v0.0.12 scope boundary: only ``ltm rule`` body QSTRINGs are
-    substituted."""
+def test_qstring_outside_irule_body_also_substituted():
+    """v0.0.14 unified QSTRING substitution: a monitor send-string
+    QSTRING containing a ledger identifier ALSO gets substring
+    substitution. The v0.0.12 split (iRule body = sub, non-iRule =
+    verbatim + diagnostic) was a conservative call premised on
+    probe-payload bytes; v0.0.14 unifies because the sanitized output is
+    never deployed to live BIG-IP."""
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.42\n"
@@ -413,15 +415,20 @@ def test_qstring_outside_irule_body_unchanged_diagnostic_fires():
     )
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
-    # Verbatim — probe payloads sometimes need original bytes.
-    assert "10.0.0.42" in sanitized
-    # Diagnostic fires for non-iRule QSTRING with identifier substring.
-    assert diag.qstring_contains_identifier != []
+    # Substituted — even in monitor send-strings.
+    assert "10.0.0.42" not in sanitized
+    assert "192.0.2.42" in sanitized
+    # No diagnostic — the leak surface is actively redacted.
+    assert diag.qstring_contains_identifier == []
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
 
 
-def test_qstring_inside_data_group_body_unchanged():
-    """v0.0.12 scope is ``ltm rule`` bodies only — ``ltm data-group``
-    bodies (which can also embed Tcl-shaped content) pass through."""
+def test_qstring_inside_data_group_body_also_substituted():
+    """v0.0.14 unified QSTRING substitution: data-group record QSTRINGs
+    are ALSO scanned for ledger originals. (v0.0.12 had data-group
+    bodies out of scope because the substring sub was gated to
+    ``ltm rule`` bodies; v0.0.14 lifts the gate.)"""
     src = (
         "ltm pool /Common/foo_pool {\n"
         "}\n"
@@ -434,9 +441,9 @@ def test_qstring_inside_data_group_body_unchanged():
     )
     ledger, diag = scan(src)
     sanitized, _ = substitute(src, ledger, diag)
-    # Data-group body QSTRINGs are NOT substituted; the identifier
-    # substring stays verbatim. Out-of-scope, documented.
-    assert "/Common/foo_pool" in sanitized
+    # Data-group body QSTRINGs ARE substituted now.
+    assert "/Common/foo_pool" not in sanitized
+    assert "/Common/POOL_0001" in sanitized
     restored = reverse_substitute(sanitized, ledger)
     assert restored == src
 

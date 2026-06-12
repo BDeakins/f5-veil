@@ -191,11 +191,12 @@ def test_description_embedded_ip_redacted_in_v004():
     assert diag.unredacted_description == []
 
 
-def test_bare_qstring_with_ip_fires_qstring_diagnostic():
-    """A bare QSTRING (NOT inside a description, NOT inside an
-    ``ltm rule`` body) containing a ledger original surfaces via
-    qstring_contains_identifier — orthogonal to the description path
-    and to v0.0.12's iRule-body Tcl-string substitution."""
+def test_bare_qstring_with_ip_gets_substituted():
+    """v0.0.14 — every QSTRING gets substring substitution, regardless
+    of context. A monitor send-string containing a ledger IP literal
+    has the IP substituted to its RFC 5737 docs-range form. The legacy
+    ``qstring_contains_identifier`` diagnostic does not fire (the leak
+    surface it was warning about is now actively redacted)."""
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.42\n"
@@ -206,9 +207,9 @@ def test_bare_qstring_with_ip_fires_qstring_diagnostic():
     )
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
-    assert diag.qstring_contains_identifier, (
-        f"expected qstring_contains_identifier; got {diag}"
-    )
+    assert "10.0.0.42" not in sanitized
+    assert "192.0.2.42" in sanitized
+    assert diag.qstring_contains_identifier == []
 
 
 # ----- node-with-IP-leaf coexistence -----------------------------------

@@ -110,14 +110,17 @@ def substitute(
     if diagnostics is None:
         diagnostics = Diagnostics()
     tokens = list(tokenize(src))
-    # v0.0.12 — full substring map for QSTRINGs INSIDE iRule bodies.
-    irule_render_map = _build_substring_render_map(ledger)
-    # v0.0.13 — AD-DN-only substring map for QSTRINGs OUTSIDE iRule
-    # bodies. AD DNs are distinctive and never legitimate probe-payload
-    # content, so they get globally substituted.
-    ad_dn_render_map = _build_substring_render_map(
-        ledger, kind_filter={Kind.AD_GROUP_DN},
-    )
+    # v0.0.14 — unified substring map for ALL QSTRINGs (both inside and
+    # outside ``ltm rule`` bodies). The v0.0.12 split between
+    # iRule-body (full sub) and non-iRule (verbatim + diagnostic) was a
+    # conservative call premised on "probe payloads may legitimately
+    # need original bytes" — but the sanitized output is never deployed
+    # to a live BIG-IP (it's AI workspace), so substituting everywhere
+    # is strictly better. EXAMPLE_CORPUS survivor audit drove the unification:
+    # 23 ``/Common/...`` UNK references and 11 ``192.168.x.x/24`` IPADDR
+    # references inside monitor send-strings + APM expressions that
+    # weren't redacted under the v0.0.13 contract.
+    qstring_render_map = _build_substring_render_map(ledger)
     out: list[str] = []
     cursor = 0
     depth = 0
@@ -167,20 +170,11 @@ def substitute(
             cursor = last.offset + last.length
             i += consumed
             continue
-        # ---- iRule-body QSTRING: full substring substitution ----
-        if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
-            out.append(
-                _substitute_in_irule_qstring(tok, irule_render_map, ledger)
-            )
-            cursor = tok.offset + tok.length
-            i += 1
-            continue
-        # ---- Non-iRule QSTRING: AD DN substring sub + diagnostic ----
+        # ---- QSTRING (any context): full substring substitution (v0.0.14) ----
         if tok.kind == TokKind.QSTRING:
             out.append(
-                _substitute_in_irule_qstring(tok, ad_dn_render_map, ledger)
+                _substitute_in_irule_qstring(tok, qstring_render_map, ledger)
             )
-            _check_qstring_for_identifier(tok, ledger, diagnostics)
             cursor = tok.offset + tok.length
             i += 1
             continue
@@ -486,10 +480,8 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     reverse_map = _build_reverse_map(ledger)
     qstring_reverse_map = _build_qstring_reverse_map(ledger)
     comment_reverse_map = _build_comment_reverse_map(ledger)
-    irule_reverse_map = _build_substring_reverse_render_map(ledger)
-    ad_dn_reverse_map = _build_substring_reverse_render_map(
-        ledger, kind_filter={Kind.AD_GROUP_DN},
-    )
+    # v0.0.14 — single unified reverse map for ALL QSTRINGs.
+    qstring_substring_reverse_map = _build_substring_reverse_render_map(ledger)
     tokens = list(tokenize(sanitized))
     out: list[str] = []
     cursor = 0
@@ -530,22 +522,16 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
             cursor = last.offset + last.length
             i += 4
             continue
-        # ---- iRule-body QSTRING: full substring reverse substitution ----
-        if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
-            out.append(
-                _reverse_substitute_in_irule_qstring(tok, irule_reverse_map)
-            )
-            cursor = tok.offset + tok.length
-            i += 1
-            continue
-        # ---- Non-iRule QSTRING: DESC reverse first, else AD DN reverse ----
+        # ---- QSTRING (any context): DESC reverse first, else substring reverse (v0.0.14) ----
         if tok.kind == TokKind.QSTRING:
             if tok.value in qstring_reverse_map:
+                # Whole-QSTRING DESC placeholder ("DESC_NNNN") restores
+                # to the original quoted/braced span verbatim.
                 out.append(qstring_reverse_map[tok.value])
             else:
                 out.append(
                     _reverse_substitute_in_irule_qstring(
-                        tok, ad_dn_reverse_map,
+                        tok, qstring_substring_reverse_map,
                     )
                 )
             cursor = tok.offset + tok.length

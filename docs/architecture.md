@@ -1,22 +1,23 @@
 # f5-veil Architecture
 
-Status: v0.0.13 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.14 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-1.8 (iRule `#` comment) + pass-1.9 (AD / LDAP distinguished name) +
-pass-2 substitution (Tcl-string-aware inside `ltm rule` bodies +
-globally-applied AD DN substring substitution in every QSTRING) +
-AES-256-GCM answer file + obfuscate/deobfuscate CLI + leak detector
-with `--strict`. Object scope: LTM pool / virtual / node / monitor /
-rule / partition / profile / data-group / snat / snatpool /
-virtual-address, GTM pool / wideip / server / datacenter / region, net
-vlan / route-domain / self / trunk, APM policy / profile, security
-firewall policy / rule-list / address-list / port-list; bare IPv4/IPv6
-literals; **QSTRING, bareword AND braced descriptions**; **Tcl `#`
-comments AND Tcl `"..."` string substring substitution inside `ltm
-rule` bodies**; **AD / LDAP distinguished names
-(`CN=...,DC=...,DC=...`) inside any QSTRING**. gtm topology, net
-interface, security dos, apm aaa/sso/acl, full ASM coverage, and
-`auth remote-role role-info` header paths (the customer-defined role
-bucket names) still pending — v0.0.14+ scope.
+pass-2 substitution (full substring substitution applied to every
+QSTRING regardless of TMSH context) + AES-256-GCM answer file +
+obfuscate/deobfuscate CLI + leak detector with `--strict`. Object
+scope: LTM pool / virtual / node / monitor / rule / partition /
+profile / data-group / snat / snatpool / virtual-address, GTM pool /
+wideip / server / datacenter / region, net vlan / route-domain / self
+/ trunk, APM policy / profile, security firewall policy / rule-list /
+address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
+AND braced descriptions**; **Tcl `#` comments inside `ltm rule`
+bodies**; **identifier substring substitution inside every QSTRING**
+(applies to paths, IPs, partitions, AD DNs uniformly). gtm topology,
+net interface, security dos, apm aaa/sso/acl, full ASM coverage,
+`auth remote-role role-info` header paths, internal-FQDN discovery,
+and BAREWORD-level substring substitution (for IPs embedded in
+compound barewords like `https://10.0.0.42/path`) still pending —
+v1.1+ scope.
 
 ## Goal
 
