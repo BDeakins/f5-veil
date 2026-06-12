@@ -1,14 +1,8 @@
-"""f5-veil CLI entry point. Implementation pending."""
+"""f5-veil package entry point. See :mod:`veil.cli` for the actual CLI."""
 
 from __future__ import annotations
 
-import sys
-
-
-def main() -> int:
-    print("f5-veil v0.0.1 — not yet implemented", file=sys.stderr)
-    return 1
-
+from .cli import main
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

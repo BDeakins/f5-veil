@@ -1,7 +1,9 @@
 # f5-veil Architecture
 
 Status: v0.0.1 — pass-1 scanner + ledger + pass-2 substitution + AES-256-GCM
-answer file landed. CLI and `description` redaction not yet implemented.
+answer file + `veil obfuscate` / `veil deobfuscate` CLI landed. Tracer-bullet
+object scope only (pool, virtual, node, monitor, rule, partition). Description
+redaction, full GTM/profile/ASM coverage, and leak detector still pending.
 
 ## Goal
 
@@ -163,15 +165,43 @@ Default: warn and continue. `--strict`: abort obfuscation.
 ```
 src/veil/
   __init__.py        package version
-  __main__.py        CLI stub (functional CLI not yet implemented)
+  __main__.py        entry point — re-exports cli.main
+  cli.py             argparse, obfuscate/deobfuscate commands, exit codes
   ledger.py          Kind, Ref, LedgerEntry, Ledger, COMMON_PARTITION
   tokenizer.py       Token, TokKind, tokenize(src)
   diagnostics.py     Diagnostics (shared by scanner + substitute)
   scanner.py         scan(src) -> (Ledger, Diagnostics)
-  substitute.py      substitute(src, ledger, diag) -> (sanitized, diag)
+  substitute.py      substitute(src, ledger, diag), reverse_substitute(...)
   answer_file.py     write_answer_file(...), read_answer_file(...),
                      AnswerFileError
 ```
+
+## CLI semantics
+
+- **Default is fail-closed.** Any non-empty Diagnostics field aborts
+  obfuscation with exit code 1; no sanitized output and no answer file
+  written. `--allow-incomplete` is the explicit opt-in to proceed.
+- **`--strict` reserved** for the future leak-detector PR.
+- **Crash-safe ordering:** answer file lands on disk before sanitized
+  output. A crash mid-pipeline never produces a sanitized file orphaned
+  from its decryption key.
+- **Passphrase precedence:** `--passphrase-file` > `VEIL_PASSPHRASE` env
+  var > interactive prompt (`getpass`). Both non-interactive paths warn
+  to stderr. Obfuscate prompts with confirmation; deobfuscate prompts once.
+- **stdin/stdout** supported via `-` sentinel for `--input` / `--output`.
+  Answer file always a real path.
+- **Existing-file protection:** `--output` and `--answer-file` paths that
+  already exist abort with exit code 2 unless `--force` is passed.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | success |
+| 1 | fail-closed (diagnostics non-empty, no `--allow-incomplete`) |
+| 2 | user / argument error (missing flag, file exists, etc.) |
+| 3 | I/O error |
+| 4 | decryption failed (wrong passphrase or tampered answer file) |
 
 ## Known gaps (deferred to follow-up PRs)
 

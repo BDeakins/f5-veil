@@ -203,3 +203,71 @@ def _check_orphan_entries(ledger: Ledger, diagnostics: Diagnostics) -> None:
     for placeholder, entry in ledger.entries.items():
         if not entry.references:
             diagnostics.orphan_entries.append(placeholder)
+
+
+# ---------------------------------------------------------------------
+# Reverse substitution (deobfuscation)
+# ---------------------------------------------------------------------
+
+
+def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
+    """Inverse of :func:`substitute`. Replaces rendered placeholders in
+    ``sanitized`` with their original values from the (frozen) ledger.
+
+    Walks the sanitized source as a token stream and replaces any WORD
+    token whose value matches a rendered-placeholder key in the reverse
+    map. Inter-token whitespace is preserved via cursor-tracking, so the
+    output is byte-faithful to the sanitized input modulo the placeholder
+    swap-outs.
+
+    Tokens that don't match the reverse map pass through verbatim — this
+    is how the AI's newly-introduced content (e.g. new iRule code) is
+    preserved while still restoring any placeholder it referenced.
+    """
+    reverse_map = _build_reverse_map(ledger)
+    tokens = list(tokenize(sanitized))
+    out: list[str] = []
+    cursor = 0
+    for tok in tokens:
+        if tok.offset > cursor:
+            out.append(sanitized[cursor:tok.offset])
+        if tok.kind == TokKind.WORD and tok.value in reverse_map:
+            out.append(reverse_map[tok.value])
+        else:
+            out.append(tok.value)
+        cursor = tok.offset + tok.length
+    if cursor < len(sanitized):
+        out.append(sanitized[cursor:])
+    return "".join(out)
+
+
+def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
+    """Build the rendered-placeholder -> original lookup table.
+
+    Keys are the string forms that pass-2 substitution actually emits:
+    bare ``PARTITION_NNNN`` for partition references, ``/Common/POOL_NNNN``
+    for Common-partition objects, ``/PARTITION_NNNN/POOL_NNNN`` for
+    non-Common objects, and bare ``POOL_NNNN`` for entries with no
+    partition. Same partition-invariant guard as the forward path:
+    if a non-Common object's partition has no ``PARTITION_NNNN`` entry,
+    refuse — the ledger is inconsistent and deobfuscation would either
+    fail silently or leak the literal partition name.
+    """
+    rmap: dict[str, str] = {}
+    for entry in ledger.entries.values():
+        if entry.kind == Kind.PARTITION:
+            rmap[entry.placeholder] = entry.original
+        elif entry.partition is None:
+            rmap[entry.placeholder] = entry.original
+        elif entry.partition == "Common":
+            rmap[f"/Common/{entry.placeholder}"] = entry.original
+        else:
+            part_ph = ledger.by_original.get((Kind.PARTITION, entry.partition))
+            if part_ph is None:
+                raise RuntimeError(
+                    f"ledger invariant violated during deobfuscation: "
+                    f"object {entry.placeholder} references partition "
+                    f"{entry.partition!r} which has no PARTITION entry."
+                )
+            rmap[f"/{part_ph}/{entry.placeholder}"] = entry.original
+    return rmap

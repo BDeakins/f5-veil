@@ -1,6 +1,6 @@
 from veil.ledger import Kind, Ledger, Ref
 from veil.scanner import scan
-from veil.substitute import substitute
+from veil.substitute import reverse_substitute, substitute
 
 
 def _scan_and_substitute(src):
@@ -205,6 +205,49 @@ def test_substitute_raises_on_unresolvable_partition_rather_than_leak():
         "expected RuntimeError on unresolvable partition; "
         f"got sanitized output instead: {sanitized!r}"
     )
+
+
+def test_reverse_substitute_round_trip_common_partition():
+    src = "ltm pool /Common/foo {\n}\n"
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert reverse_substitute(sanitized, ledger) == src
+
+
+def test_reverse_substitute_round_trip_non_common_partition():
+    src = (
+        "ltm pool /Tenant_A/foo {\n"
+        "}\n"
+        "ltm virtual /Tenant_A/vs1 {\n"
+        "    pool /Tenant_A/foo\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert reverse_substitute(sanitized, ledger) == src
+
+
+def test_reverse_substitute_passes_unknown_placeholder_through_verbatim():
+    # An AI-introduced placeholder (`POOL_9999`) that's not in the ledger
+    # must pass through unchanged — we never synthesize originals.
+    src = "ltm pool /Common/foo {\n}\n"
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    sanitized_plus = sanitized + "\n# AI added: see also POOL_9999\n"
+    restored = reverse_substitute(sanitized_plus, ledger)
+    assert restored.endswith("# AI added: see also POOL_9999\n")
+    assert restored.startswith("ltm pool /Common/foo")
+
+
+def test_reverse_substitute_restores_bare_partition_token():
+    # `partition Tenant_A` becomes `partition PARTITION_0001` in sanitized
+    # output; reverse must restore the bare partition reference.
+    src = "ltm pool /Tenant_A/foo {\n}\n"
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    sanitized_with_bare = sanitized + "\npartition PARTITION_0001\n"
+    restored = reverse_substitute(sanitized_with_bare, ledger)
+    assert "partition Tenant_A" in restored
 
 
 def test_node_referenced_inside_pool_members_is_substituted():

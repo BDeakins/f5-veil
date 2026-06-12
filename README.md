@@ -4,7 +4,10 @@ F5 BIG-IP config obfuscator/de-obfuscator — sanitize customer configs for safe
 
 ## Status
 
-Early development. Not yet functional. v0.0.1 scaffold.
+v0.0.1 — tracer-bullet CLI functional. Supported objects: `ltm pool`,
+`ltm virtual`, `ltm node`, `ltm monitor <subtype>`, `ltm rule`,
+partition paths. Full LTM coverage, GTM, ASM, profiles, certs, and the
+leak detector are next. See [docs/architecture.md](docs/architecture.md).
 
 ## The Problem
 
@@ -60,7 +63,7 @@ pip install f5-veil   # not yet published
 
 Requires Python 3.10 or newer.
 
-## Usage (planned)
+## Usage
 
 ```bash
 # Obfuscate a single bigip.conf
