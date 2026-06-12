@@ -71,6 +71,15 @@ class Kind(str, Enum):
     VADDR = "VADDR"  # ``ltm virtual-address /path { ... }`` — explicit
     # virtual-address object (auto-created by virtual definitions, but
     # configs may override settings via explicit blocks).
+    VLAN = "VLAN"  # ``net vlan /path { ... }`` — L2 broadcast domain.
+    ROUTE_DOMAIN = "ROUTE_DOMAIN"  # ``net route-domain /path { ... }``
+    # — routing-namespace isolation for multi-tenant.
+    SELF_IP = "SELF_IP"  # ``net self /path { ... }`` — self-IP object
+    # (the BIG-IP's own L3 address on a VLAN).
+    TRUNK = "TRUNK"  # ``net trunk /path { ... }`` — LACP / link
+    # aggregation.
+    GTM_REGION = "GTM_REGION"  # ``gtm region /path { ... }`` — named
+    # collection of subnets / countries for GTM topology decisions.
 
 
 _RFC5737_NETWORKS = (

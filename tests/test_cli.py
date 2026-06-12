@@ -402,11 +402,11 @@ _LEAKY_CFG = (
     "ltm pool /Common/foo {\n"
     f"    custom_attribute {_LEAKY_TOKEN}\n"
     "}\n"
-    # ``net vlan`` is still unrecognised in v0.0.7 — fires
-    # ``unknown_top_level``. Each round of kind expansion forces this
-    # fixture to migrate to whichever common shape isn't yet handled.
-    "net vlan /Common/vlan_customer {\n"
-    "    tag 10\n"
+    # ``apm policy access-policy`` is still unrecognised in v0.0.8 —
+    # fires ``unknown_top_level``. Each round of kind expansion forces
+    # this fixture to migrate to whichever shape isn't yet handled.
+    "apm policy access-policy /Common/customer_apm_policy {\n"
+    "    default-ending-deny none\n"
     "}\n"
 )
 _CLEAN_CFG = "ltm pool /Common/foo {\n}\n"

@@ -1,15 +1,15 @@
 # f5-veil Architecture
 
-Status: v0.0.7 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.8 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
 CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
-/ node / monitor / rule / partition / profile / **data-group / snat /
-snatpool / virtual-address**, GTM pool / wideip / server / datacenter;
-bare IPv4/IPv6 literals; QSTRING and bareword descriptions; built-in
-TMOS profile names pass through literal. Shadowed-duplicate ledger
-entries (e.g. NODE + VADDR sharing same IP path) no longer
-mis-reported as orphans. Braced descriptions, gtm topology/region,
-ASM, net VLAN/route-domain still pending.
+/ node / monitor / rule / partition / profile / data-group / snat /
+snatpool / virtual-address, GTM pool / wideip / server / datacenter /
+**region**, **net vlan / route-domain / self / trunk**; bare IPv4/IPv6
+literals; QSTRING and bareword descriptions; built-in TMOS profile
+names pass through literal. Shadowed-duplicate ledger entries
+suppressed as orphans. Braced descriptions, gtm topology, net
+interface, ASM still pending.
 
 ## Goal
 
@@ -136,6 +136,11 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `SNAT` | `SNAT_0001` | `/Common/customer_snat` |
 | `SNATPOOL` | `SNATPOOL_0001` | `/Common/customer_snatpool` |
 | `VADDR` | `VADDR_0001` | `/Common/customer_vs_addr` (`ltm virtual-address`; may shadow a NODE entry of the same IP path — see orphan note below) |
+| `VLAN` | `VLAN_0001` | `/Common/customer_vlan` (`net vlan`) |
+| `ROUTE_DOMAIN` | `ROUTE_DOMAIN_0001` | `/Common/customer_rd` (`net route-domain`) |
+| `SELF_IP` | `SELF_IP_0001` | `/Common/self_ip` (`net self`) |
+| `TRUNK` | `TRUNK_0001` | `/Common/customer_trunk` (`net trunk`) |
+| `GTM_REGION` | `GTM_REGION_0001` | `/Common/customer_region` (`gtm region`) |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -371,6 +376,10 @@ src/veil/
   landed in v0.0.6. `gtm topology` / `gtm region` deferred.
 - **LTM extras kinds** (data-group / snat / snatpool / virtual-address)
   + shadowed-duplicate orphan suppression — landed in v0.0.7.
+- **Net family + GTM region** (vlan / route-domain / self / trunk /
+  gtm region) — landed in v0.0.8. `net interface` and `gtm topology`
+  deferred (unusual shapes — interface has no /partition prefix;
+  topology has no path token at all).
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.

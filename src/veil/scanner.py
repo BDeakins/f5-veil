@@ -223,6 +223,8 @@ def _try_match_object(
         return 0
     if tokens[i].value == "gtm":
         return _try_match_gtm_object(tokens, i, ledger, diagnostics)
+    if tokens[i].value == "net":
+        return _try_match_net_object(tokens, i, ledger, diagnostics)
     if tokens[i].value != "ltm":
         return 0
     second = tokens[i + 1].value
@@ -277,11 +279,43 @@ def _try_match_object(
 _GTM_TWO_WORD_KINDS = MappingProxyType({
     "server": Kind.GTM_SERVER,
     "datacenter": Kind.GTM_DC,
+    "region": Kind.GTM_REGION,
 })
 _GTM_THREE_WORD_KINDS = MappingProxyType({
     "pool": Kind.GTM_POOL,
     "wideip": Kind.GTM_WIDEIP,
 })
+
+_NET_TWO_WORD_KINDS = MappingProxyType({
+    "vlan": Kind.VLAN,
+    "route-domain": Kind.ROUTE_DOMAIN,
+    "self": Kind.SELF_IP,
+    "trunk": Kind.TRUNK,
+})
+
+
+def _try_match_net_object(
+    tokens: list[Token],
+    i: int,
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+) -> int:
+    """Recognise ``net <kind> /path {`` (4-token) headers. Returns
+    tokens consumed or 0. ``net interface`` is intentionally NOT
+    handled — interface names like ``1.1`` lack a ``/partition/leaf``
+    structure and would slip into ``malformed_paths`` if registered."""
+    second = tokens[i + 1].value
+    kind = _NET_TWO_WORD_KINDS.get(second)
+    if kind is None:
+        return 0
+    if i + 3 >= len(tokens):
+        return 0
+    path_tok = tokens[i + 2]
+    lbrace = tokens[i + 3]
+    if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+        return 0
+    _register(ledger, kind, path_tok, diagnostics)
+    return 4
 
 
 def _try_match_gtm_object(
