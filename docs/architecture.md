@@ -1,15 +1,15 @@
 # f5-veil Architecture
 
-Status: v0.0.8 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.9 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
 CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
 / node / monitor / rule / partition / profile / data-group / snat /
 snatpool / virtual-address, GTM pool / wideip / server / datacenter /
-**region**, **net vlan / route-domain / self / trunk**; bare IPv4/IPv6
-literals; QSTRING and bareword descriptions; built-in TMOS profile
-names pass through literal. Shadowed-duplicate ledger entries
-suppressed as orphans. Braced descriptions, gtm topology, net
-interface, ASM still pending.
+region, net vlan / route-domain / self / trunk, **APM policy / profile,
+security firewall policy / rule-list / address-list / port-list**;
+bare IPv4/IPv6 literals; QSTRING and bareword descriptions. Braced
+descriptions, gtm topology, net interface, security dos, apm
+aaa/sso/acl still pending.
 
 ## Goal
 
@@ -141,6 +141,12 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `SELF_IP` | `SELF_IP_0001` | `/Common/self_ip` (`net self`) |
 | `TRUNK` | `TRUNK_0001` | `/Common/customer_trunk` (`net trunk`) |
 | `GTM_REGION` | `GTM_REGION_0001` | `/Common/customer_region` (`gtm region`) |
+| `APM_POLICY` | `APM_POLICY_0001` | `/Common/customer_apm_policy` (`apm policy access-policy`, `apm policy customization-source`, etc.) |
+| `APM_PROFILE` | `APM_PROFILE_0001` | `/Common/customer_apm_access` (`apm profile access`) |
+| `FIREWALL_POLICY` | `FIREWALL_POLICY_0001` | `/Common/customer_fwp` (`security firewall policy`) |
+| `FIREWALL_RULE_LIST` | `FIREWALL_RULE_LIST_0001` | `/Common/customer_rl` (`security firewall rule-list`) |
+| `FIREWALL_ADDRESS_LIST` | `FIREWALL_ADDRESS_LIST_0001` | `/Common/customer_addrs` (`security firewall address-list`) |
+| `FIREWALL_PORT_LIST` | `FIREWALL_PORT_LIST_0001` | `/Common/customer_ports` (`security firewall port-list`) |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -380,6 +386,9 @@ src/veil/
   gtm region) — landed in v0.0.8. `net interface` and `gtm topology`
   deferred (unusual shapes — interface has no /partition prefix;
   topology has no path token at all).
+- **APM + security firewall** (apm policy / profile, security firewall
+  policy / rule-list / address-list / port-list) — landed in v0.0.9.
+  `apm aaa/sso/acl` and `security dos` deferred.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.

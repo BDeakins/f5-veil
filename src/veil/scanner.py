@@ -225,6 +225,10 @@ def _try_match_object(
         return _try_match_gtm_object(tokens, i, ledger, diagnostics)
     if tokens[i].value == "net":
         return _try_match_net_object(tokens, i, ledger, diagnostics)
+    if tokens[i].value == "apm":
+        return _try_match_apm_object(tokens, i, ledger, diagnostics)
+    if tokens[i].value == "security":
+        return _try_match_security_object(tokens, i, ledger, diagnostics)
     if tokens[i].value != "ltm":
         return 0
     second = tokens[i + 1].value
@@ -292,6 +296,67 @@ _NET_TWO_WORD_KINDS = MappingProxyType({
     "self": Kind.SELF_IP,
     "trunk": Kind.TRUNK,
 })
+
+# APM uses three-word headers: ``apm <module> <subtype> /path {``.
+# Modules: policy (covers access-policy, customization-source, etc.),
+# profile (access, log-setting, etc.). AAA / SSO / ACL are deferred.
+_APM_THREE_WORD_KINDS = MappingProxyType({
+    "policy": Kind.APM_POLICY,
+    "profile": Kind.APM_PROFILE,
+})
+
+# ``security firewall <kind> /path {`` — 5 tokens.
+_SECURITY_FIREWALL_KINDS = MappingProxyType({
+    "policy": Kind.FIREWALL_POLICY,
+    "rule-list": Kind.FIREWALL_RULE_LIST,
+    "address-list": Kind.FIREWALL_ADDRESS_LIST,
+    "port-list": Kind.FIREWALL_PORT_LIST,
+})
+
+
+def _try_match_apm_object(
+    tokens: list[Token],
+    i: int,
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+) -> int:
+    """``apm <module> <subtype> /path {`` — 5 tokens."""
+    if i + 4 >= len(tokens):
+        return 0
+    second = tokens[i + 1].value
+    kind = _APM_THREE_WORD_KINDS.get(second)
+    if kind is None:
+        return 0
+    path_tok = tokens[i + 3]
+    lbrace = tokens[i + 4]
+    if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+        return 0
+    _register(ledger, kind, path_tok, diagnostics)
+    return 5
+
+
+def _try_match_security_object(
+    tokens: list[Token],
+    i: int,
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+) -> int:
+    """``security firewall <kind> /path {`` — 5 tokens. Other security
+    sub-modules (dos, log, nat, etc.) deferred."""
+    if i + 4 >= len(tokens):
+        return 0
+    if tokens[i + 1].value != "firewall":
+        return 0
+    third = tokens[i + 2].value
+    kind = _SECURITY_FIREWALL_KINDS.get(third)
+    if kind is None:
+        return 0
+    path_tok = tokens[i + 3]
+    lbrace = tokens[i + 4]
+    if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+        return 0
+    _register(ledger, kind, path_tok, diagnostics)
+    return 5
 
 
 def _try_match_net_object(

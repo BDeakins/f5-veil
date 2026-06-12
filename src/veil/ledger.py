@@ -80,6 +80,18 @@ class Kind(str, Enum):
     # aggregation.
     GTM_REGION = "GTM_REGION"  # ``gtm region /path { ... }`` — named
     # collection of subnets / countries for GTM topology decisions.
+    APM_POLICY = "APM_POLICY"  # ``apm policy <subtype> /path { ... }``
+    # — access policies (access-policy, customization-source, etc.).
+    APM_PROFILE = "APM_PROFILE"  # ``apm profile <subtype> /path { ... }``
+    # — access profile (access, etc.).
+    FIREWALL_POLICY = "FIREWALL_POLICY"  # ``security firewall policy
+    # /path { ... }`` — AFM firewall policy object.
+    FIREWALL_RULE_LIST = "FIREWALL_RULE_LIST"  # ``security firewall
+    # rule-list /path { ... }`` — reusable AFM rule list.
+    FIREWALL_ADDRESS_LIST = "FIREWALL_ADDRESS_LIST"  # ``security
+    # firewall address-list /path { ... }``.
+    FIREWALL_PORT_LIST = "FIREWALL_PORT_LIST"  # ``security firewall
+    # port-list /path { ... }``.
 
 
 _RFC5737_NETWORKS = (

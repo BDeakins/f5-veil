@@ -402,11 +402,11 @@ _LEAKY_CFG = (
     "ltm pool /Common/foo {\n"
     f"    custom_attribute {_LEAKY_TOKEN}\n"
     "}\n"
-    # ``apm policy access-policy`` is still unrecognised in v0.0.8 —
-    # fires ``unknown_top_level``. Each round of kind expansion forces
-    # this fixture to migrate to whichever shape isn't yet handled.
-    "apm policy access-policy /Common/customer_apm_policy {\n"
-    "    default-ending-deny none\n"
+    # ``security dos profile`` is still unrecognised in v0.0.9 — fires
+    # ``unknown_top_level``. Each round of kind expansion forces this
+    # fixture to migrate to whichever shape isn't yet handled.
+    "security dos profile /Common/customer_dos_profile {\n"
+    "    description none\n"
     "}\n"
 )
 _CLEAN_CFG = "ltm pool /Common/foo {\n}\n"
