@@ -92,6 +92,14 @@ class Kind(str, Enum):
     # firewall address-list /path { ... }``.
     FIREWALL_PORT_LIST = "FIREWALL_PORT_LIST"  # ``security firewall
     # port-list /path { ... }``.
+    IRULE_COMMENT = "IRULE_COMMENT"  # Tcl ``#`` comments discovered inside
+    # an ``ltm rule /path { ... }`` body. ``original`` stores the full
+    # COMMENT token text (leading ``#`` included, no trailing newline).
+    # Pass-2 emits the placeholder as a COMMENT token in the form
+    # ``# IRULE_COMMENT_NNNN`` so the leading ``#`` survives round-trip
+    # via the tokenizer; the reverse pass restores the original byte-exact
+    # via the comment reverse map. Top-level comments (e.g.
+    # ``#TMSH-VERSION:``) are never interned and pass through verbatim.
 
 
 _RFC5737_NETWORKS = (

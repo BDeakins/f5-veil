@@ -34,6 +34,7 @@ from types import MappingProxyType
 from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
 from .ip_discovery import discover_ip_literals
+from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .tokenizer import Token, TokKind, tokenize
 
@@ -146,6 +147,10 @@ def scan(
     # the ``description`` keyword and its value; interns the value so
     # pass-2 can substitute it with a ``DESC_NNNN`` placeholder.
     discover_descriptions(src, ledger, diagnostics)
+    # Pass 1.8 — Tcl ``#`` comment redaction inside ``ltm rule`` bodies
+    # (v0.0.11). Top-level comments (e.g. ``#TMSH-VERSION:``) are NOT
+    # discovered — they are universal BIG-IP signal.
+    discover_irule_comments(src, ledger, diagnostics)
     return ledger, diagnostics
 
 

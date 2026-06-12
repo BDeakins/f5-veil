@@ -1,16 +1,17 @@
 # f5-veil Architecture
 
-Status: v0.0.10 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
-pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
-CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
-/ node / monitor / rule / partition / profile / data-group / snat /
-snatpool / virtual-address, GTM pool / wideip / server / datacenter /
-region, net vlan / route-domain / self / trunk, APM policy / profile,
-security firewall policy / rule-list / address-list / port-list;
-bare IPv4/IPv6 literals; **QSTRING, bareword AND braced descriptions**.
-gtm topology, net interface, security dos, apm aaa/sso/acl, full ASM
-coverage still pending. Tcl-lexer iRule body redaction is the largest
-single remaining feature.
+Status: v0.0.11 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+pass-1.8 (iRule `#` comment) + pass-2 substitution + AES-256-GCM answer
+file + obfuscate/deobfuscate CLI + leak detector with `--strict`.
+Object scope: LTM pool / virtual / node / monitor / rule / partition
+/ profile / data-group / snat / snatpool / virtual-address, GTM pool /
+wideip / server / datacenter / region, net vlan / route-domain / self
+/ trunk, APM policy / profile, security firewall policy / rule-list /
+address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
+AND braced descriptions**; **Tcl `#` comments inside `ltm rule`
+bodies**. gtm topology, net interface, security dos, apm aaa/sso/acl,
+full ASM coverage still pending. Tcl-string substring substitution
+inside iRule bodies is the next cycle (v0.0.12).
 
 ## Goal
 
@@ -394,6 +395,16 @@ src/veil/
   as the ledger original (including braces and inner whitespace) so
   reverse restores byte-exactly. Forward emit uses the QSTRING form
   (`description "DESC_NNNN"`) regardless of input form.
+- **Tcl `#` comment redaction inside `ltm rule` bodies** — landed in
+  v0.0.11 via pass-1.8 (`irule_comment_discovery`) + `Kind.IRULE_COMMENT`.
+  Top-level COMMENT tokens (`#TMSH-VERSION:` etc.) are NOT discovered —
+  universal BIG-IP signal. Dedup is by full COMMENT token text
+  (including the leading `#`). Pass-2 emits `# IRULE_COMMENT_NNNN`,
+  the tokenizer re-tokenizes this back to a single COMMENT token, and
+  the reverse pass restores the original via a dedicated
+  `comment_reverse_map`. Tcl `\<newline>` line-continuation inside
+  comments is NOT folded — each physical line becomes its own
+  placeholder; folding is a future refinement.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.
@@ -402,11 +413,12 @@ src/veil/
 - **`description` aggressive redaction.** Pass 2 emits descriptions
   verbatim plus an `unredacted_description` diagnostic. A 'pass 1.5:
   free-text discovery' PR will mint `DESC_NNNN` placeholders.
-- **Tcl-lexer-aware iRule body substitution.** Bare path-shaped
-  barewords inside rule bodies substitute normally; paths embedded in
-  Tcl strings only surface as `qstring_contains_identifier`. Tcl `#`
-  comments inside rule bodies emit verbatim — locked architecture says
-  these need redaction (same posture as `description`).
+- **Tcl-string-aware substring substitution inside iRule bodies.** Bare
+  path-shaped barewords inside rule bodies substitute normally; paths
+  embedded in Tcl strings (`"..."`) only surface as
+  `qstring_contains_identifier` — substring substitution is v0.0.12
+  scope. Tcl `#` comments inside rule bodies are redacted in v0.0.11
+  (see above).
 - **Profile, SNAT, data-group, ASM, GTM, VLAN, cert, route-domain
   kinds.** Each unknown top-level block surfaces as
   `unknown_top_level` diagnostic; pass-2 callers fail closed.

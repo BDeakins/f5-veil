@@ -44,13 +44,14 @@ entry where applicable so callers can fail closed):
   is deferred to a dedicated 'pass 1.5: free-text discovery' PR.
 - Folder-nested object paths (``/Common/folder/sub/leaf``) collapse the
   folder into the leaf placeholder; folder semantics are not preserved.
-- Tcl-lexer-aware iRule body substitution. Bare path-shaped barewords
-  inside rule bodies are substituted normally; paths embedded in Tcl
-  strings only surface as ``qstring_contains_identifier``.
-- Tcl ``#`` comments inside iRule bodies are emitted verbatim with no
-  diagnostic. The locked architecture says these need redaction (same
-  posture as ``description``); deferred to the iRule-Tcl-lexer PR which
-  must add brace-depth + rule-body tracking.
+- Tcl-string-aware substring substitution inside iRule bodies. Bare
+  path-shaped barewords inside rule bodies are substituted normally;
+  paths embedded in Tcl strings (``"..."``) only surface as
+  ``qstring_contains_identifier`` — deferred to v0.0.12.
+- Tcl ``#`` comments inside ``ltm rule`` bodies are redacted in v0.0.11
+  via :func:`veil.irule_comment_discovery.discover_irule_comments` +
+  ledger lookup in :func:`_emit_token`. Top-level COMMENT tokens
+  (``#TMSH-VERSION:`` etc.) are never interned and pass through verbatim.
 - Unterminated QSTRINGs (source has an opening quote with no close)
   scan to EOF; the qstring-contains-identifier check still runs on the
   EOF-truncated content. Edge case, deferred.
@@ -153,7 +154,20 @@ def _emit_token(tok: Token, ledger: Ledger, diagnostics: Diagnostics) -> str:
     if tok.kind == TokKind.QSTRING:
         _check_qstring_for_identifier(tok, ledger, diagnostics)
         return tok.value
-    # LBRACE, RBRACE, COMMENT pass through verbatim.
+    if tok.kind == TokKind.COMMENT:
+        # iRule-body comments (Kind.IRULE_COMMENT) interned by pass-1.8
+        # are redacted here; top-level comments are never interned and
+        # pass through verbatim.
+        placeholder = ledger.by_original.get((Kind.IRULE_COMMENT, tok.value))
+        if placeholder is not None:
+            entry = ledger.entries[placeholder]
+            ledger.record_reference(
+                placeholder,
+                Ref(byte_offset=tok.offset, length=tok.length, line=tok.line),
+            )
+            return f"# {entry.placeholder}"
+        return tok.value
+    # LBRACE, RBRACE pass through verbatim.
     return tok.value
 
 
@@ -383,6 +397,7 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     """
     reverse_map = _build_reverse_map(ledger)
     qstring_reverse_map = _build_qstring_reverse_map(ledger)
+    comment_reverse_map = _build_comment_reverse_map(ledger)
     tokens = list(tokenize(sanitized))
     out: list[str] = []
     cursor = 0
@@ -406,6 +421,16 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
             # restores byte-exactly.
             if tok.value in qstring_reverse_map:
                 out.append(qstring_reverse_map[tok.value])
+            else:
+                out.append(tok.value)
+        elif tok.kind == TokKind.COMMENT:
+            # IRULE_COMMENT placeholders (v0.0.11) emit as
+            # ``# IRULE_COMMENT_NNNN`` which re-tokenizes back to a
+            # single COMMENT token. Map it back to the original comment
+            # text (which includes the leading ``#`` from pass-1.8's
+            # interning).
+            if tok.value in comment_reverse_map:
+                out.append(comment_reverse_map[tok.value])
             else:
                 out.append(tok.value)
         else:
@@ -463,6 +488,19 @@ def _build_qstring_reverse_map(ledger: Ledger) -> dict[str, str]:
     return rmap
 
 
+def _build_comment_reverse_map(ledger: Ledger) -> dict[str, str]:
+    """Map ``# IRULE_COMMENT_NNNN`` (as it appears in sanitized output,
+    re-tokenized as a single COMMENT token) back to the original COMMENT
+    token text. Key includes the leading ``#`` so a direct
+    ``tok.value`` lookup works."""
+    rmap: dict[str, str] = {}
+    for entry in ledger.entries.values():
+        if entry.kind != Kind.IRULE_COMMENT:
+            continue
+        rmap[f"# {entry.placeholder}"] = entry.original
+    return rmap
+
+
 def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
     """Build the rendered-placeholder -> original lookup table.
 
@@ -483,6 +521,9 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
         if entry.kind == Kind.DESC and (
             entry.original.startswith('"') or entry.original.startswith("{")
         ):
+            continue
+        # IRULE_COMMENT entries route through the comment reverse map.
+        if entry.kind == Kind.IRULE_COMMENT:
             continue
         if entry.kind == Kind.PARTITION:
             rmap[entry.placeholder] = entry.original
