@@ -1,7 +1,7 @@
 # f5-veil Architecture
 
-Status: v0.0.1 — pass-1 scanner + ledger + pass-2 substitution landed.
-CLI / answer-file layer and `description` redaction not yet implemented.
+Status: v0.0.1 — pass-1 scanner + ledger + pass-2 substitution + AES-256-GCM
+answer file landed. CLI and `description` redaction not yet implemented.
 
 ## Goal
 
@@ -111,15 +111,34 @@ forklift migration for cross-run consistency in v2.0.
 
 IP substitution is part of pass 2 and is not yet implemented.
 
-## Answer file
+## Answer file (`veil.answer_file`)
 
-- Format: AES-256-GCM authenticated encryption via the `cryptography`
-  package; scrypt KDF over an operator-supplied passphrase.
-- Schema: a JSON document containing the `Ledger.dump_unsafe()` output
-  plus a format-version field and the salt/nonce parameters.
-- **Crash safety:** the answer file is written to disk *before* the
-  sanitized output. A crash mid-write must never leave a sanitized file
-  orphaned from its key. Mirrors the homelab rotation-script pattern.
+- Authenticated encryption: AES-256-GCM (12-byte random nonce per file).
+- Key derivation: scrypt with OWASP-2024 interactive parameters
+  (`n=2^17, r=8, p=1, length=32`, 16-byte random salt per file).
+  Parameters are encoded in the envelope so changing defaults later
+  does not break existing files.
+- Envelope: versioned JSON wrapping base64'd ciphertext, salt, and
+  nonce. Plaintext payload is a versioned JSON document containing
+  `Ledger.dump_unsafe()` plus the Diagnostics struct (so post-hoc
+  audit of past obfuscate runs is possible without re-scanning).
+- Both layers use `json.dumps(..., sort_keys=True, indent=2)` for
+  deterministic, diff-friendly output.
+- **Single exception:** all failures (wrong passphrase, tampered file,
+  unknown version, malformed envelope, OS I/O error) raise
+  `AnswerFileError`. The decryption-failure path uses the generic
+  message `"decryption failed"` so an attacker cannot distinguish
+  wrong-passphrase from tampered-file via timing or message content.
+- **Atomic write:** `<path>.tmp` first, then `os.replace`. Tmp is
+  cleaned up on error. No fsync ceremony in v0.1.
+- **Crash safety (CLI contract):** the CLI must write the answer file
+  to disk *before* the sanitized output. A crash mid-pipeline must
+  never leave a sanitized file orphaned from its key. The library
+  doesn't enforce this — the CLI layer does.
+- **Threat model:** see the `answer_file.py` docstring. The key
+  invariants: any envelope tampering changes the derived key and
+  breaks the GCM auth tag, so weakening-via-KDF-downgrade is
+  ineffective.
 
 ## Cross-reference integrity
 
@@ -150,6 +169,8 @@ src/veil/
   diagnostics.py     Diagnostics (shared by scanner + substitute)
   scanner.py         scan(src) -> (Ledger, Diagnostics)
   substitute.py      substitute(src, ledger, diag) -> (sanitized, diag)
+  answer_file.py     write_answer_file(...), read_answer_file(...),
+                     AnswerFileError
 ```
 
 ## Known gaps (deferred to follow-up PRs)
