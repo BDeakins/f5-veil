@@ -1,7 +1,7 @@
 # f5-veil Architecture
 
-Status: v0.0.1 — pass-1 scanner + ledger landed; pass-2 substitution and
-the CLI / answer-file layer not yet implemented.
+Status: v0.0.1 — pass-1 scanner + ledger + pass-2 substitution landed.
+CLI / answer-file layer and `description` redaction not yet implemented.
 
 ## Goal
 
@@ -34,19 +34,41 @@ The obfuscator runs in two passes over `bigip.conf`:
    placeholders can be minted — the answer file persisted from this
    state is authoritative for pass 2 and for deobfuscation.
 
-### Pass 2 — substitution (NOT YET IMPLEMENTED)
+### Pass 2 — substitution (`veil.substitute.substitute`)
 
-1. Walk the original token stream and emit each token's bytes verbatim,
-   except identifier tokens that match a ledger entry — those are
-   replaced with the placeholder.
-2. Inside iRule (Tcl) bodies, descriptions, and policy rules, do a
-   second-tier substitution that is aware of Tcl strings, Tcl comments,
-   and TMSH brace-quoted descriptions (these need lexers smarter than
-   the v0.1 byte-level tokenizer).
-3. Every substitution is recorded as a `Ref` on the corresponding
-   `LedgerEntry.references` for cross-reference integrity auditing.
-4. Run the leak detector over the sanitized output. By default warn
-   on suspicious patterns; `--strict` aborts.
+1. Walk the same token stream and emit each token's bytes verbatim,
+   copying inter-token whitespace and comments from the source via
+   cursor-tracking. WORD tokens whose value matches a ledger entry are
+   rendered as path-piece placeholders (see below) instead.
+2. Every substitution is recorded as a `Ref` on the corresponding
+   `LedgerEntry.references`. Partition substitutions inside path
+   renders record references on the PARTITION entry too.
+3. Description values (`description "..."`, `description { ... }`,
+   `description bareword`) pass through verbatim and surface in
+   `Diagnostics.unredacted_description`. Dedicated DESC_NNNN minting is
+   deferred to a 'pass 1.5: free-text discovery' PR.
+4. QSTRING content (string literals) is emitted verbatim. If content
+   contains a substring matching a ledger entry's original, surface in
+   `Diagnostics.qstring_contains_identifier` so callers fail closed.
+5. At end of substitute, check every entry has at least one reference;
+   orphans surface in `Diagnostics.orphan_entries`.
+6. Hard invariant: if a non-Common object claims a partition with no
+   `PARTITION_NNNN` entry, `substitute` raises `RuntimeError` rather
+   than fall back to the literal partition name (which would leak).
+7. The leak detector (separate PR) runs over the sanitized output as
+   the last line of defense.
+
+#### Path-piece rendering
+
+When a WORD token's value matches a ledger entry, substitute emits:
+
+| Original path | Rendered placeholder |
+|---------------|----------------------|
+| `/Common/foo_pool` | `/Common/POOL_0001` |
+| `/Tenant_A/foo_pool` | `/PARTITION_0001/POOL_0001` |
+| `Tenant_A` (bare partition name in attributes) | `PARTITION_0001` |
+
+`/Common/` is preserved literal as universal BIG-IP signal.
 
 ## Placeholder taxonomy
 
@@ -125,15 +147,32 @@ src/veil/
   __main__.py        CLI stub (functional CLI not yet implemented)
   ledger.py          Kind, Ref, LedgerEntry, Ledger, COMMON_PARTITION
   tokenizer.py       Token, TokKind, tokenize(src)
-  scanner.py         Diagnostics, scan(src) -> (Ledger, Diagnostics)
+  diagnostics.py     Diagnostics (shared by scanner + substitute)
+  scanner.py         scan(src) -> (Ledger, Diagnostics)
+  substitute.py      substitute(src, ledger, diag) -> (sanitized, diag)
 ```
 
 ## Known gaps (deferred to follow-up PRs)
 
-- TMSH `description { brace-quoted string }` — parsed as LBRACE by the
-  v0.1 tokenizer. Harmless for pass 1; pass 2 must handle.
-- iRule body Tcl-aware lexing (strings, `#` comments, `\` escapes).
-- Profile / SNAT / data-group / ASM / GTM / VLAN / cert kinds.
-- Persistent cross-run identifier map (v2.0).
-- `bigip_base.conf` multi-file two-pass (v1.1).
-- UCS archive ingestion (v1.2).
+- **CLI wiring + answer file** (next PR). The library functions exist
+  but no `veil obfuscate` / `veil deobfuscate` subcommand is wired,
+  and the AES-256-GCM answer file format is not yet implemented.
+- **`description` aggressive redaction.** Pass 2 emits descriptions
+  verbatim plus an `unredacted_description` diagnostic. A 'pass 1.5:
+  free-text discovery' PR will mint `DESC_NNNN` placeholders.
+- **Tcl-lexer-aware iRule body substitution.** Bare path-shaped
+  barewords inside rule bodies substitute normally; paths embedded in
+  Tcl strings only surface as `qstring_contains_identifier`. Tcl `#`
+  comments inside rule bodies emit verbatim — locked architecture says
+  these need redaction (same posture as `description`).
+- **Profile, SNAT, data-group, ASM, GTM, VLAN, cert, route-domain
+  kinds.** Each unknown top-level block surfaces as
+  `unknown_top_level` diagnostic; pass-2 callers fail closed.
+- **Folder semantics.** `/Common/folder/sub/leaf` collapses folder
+  into the leaf placeholder; folder-as-own-kind (FOLDER_NNNN) deferred.
+- **Member-port suffix handling.** `/Common/web1:80` does not match
+  the node `/Common/web1` (different bareword). Member-port refs pass
+  through verbatim; covered by a follow-up PR.
+- **Persistent cross-run identifier map** (v2.0).
+- **`bigip_base.conf` multi-file two-pass** (v1.1).
+- **UCS archive ingestion** (v1.2).

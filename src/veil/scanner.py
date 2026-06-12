@@ -29,9 +29,9 @@ to address before pass-2 substitution lands):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from .diagnostics import Diagnostics
 from .ledger import Kind, Ledger, Ref
 from .tokenizer import Token, TokKind, tokenize
 
@@ -49,25 +49,6 @@ _TWO_WORD_KINDS = MappingProxyType({
 # through unrecognised blocks.
 _KNOWN_MODULES = frozenset({"ltm", "gtm", "net", "sys", "auth", "apm",
                             "asm", "pem", "security", "wom", "ilx", "cli"})
-
-
-@dataclass
-class Diagnostics:
-    """Things pass 1 saw but did not register. The obfuscate command MUST
-    refuse to write sanitized output while either list is non-empty (or
-    the operator must explicitly opt-in to incompleteness)."""
-
-    unknown_top_level: list[tuple[str, int]] = field(default_factory=list)
-    """List of (header_signature, line) for top-level blocks the scanner
-    did not recognise — e.g. ``('gtm wideip', 42)`` or ``('ltm dns', 17)``.
-    Header signature is the first two words for ``ltm`` and similar
-    module/subtype pairs; pure-module blocks log just the module word."""
-
-    malformed_paths: list[tuple[str, str, int]] = field(default_factory=list)
-    """List of (kind, raw_path, line) for object headers of a *recognised*
-    kind whose path token is not a well-formed ``/Partition/leaf`` — e.g.
-    ``('POOL', '/Common/', 5)``. Surfacing rather than silently dropping
-    is the CRUCIBLE C-1 fail-closed requirement."""
 
 
 def scan(
