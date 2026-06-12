@@ -109,16 +109,21 @@ def test_brace_description_redacted_to_placeholder():
 
 
 def test_qstring_containing_ledger_original_logs_diagnostic():
+    # v0.0.12: QSTRINGs inside ``ltm rule`` bodies now get substring
+    # substitution, so the diagnostic is now scoped to non-iRule
+    # QSTRINGs (monitor send-strings, etc., where probe payloads may
+    # legitimately need original bytes). The diagnostic-fires-and-text-
+    # passes-through contract is preserved for that context.
     src = (
         "ltm pool /Common/foo {\n"
         "}\n"
-        "ltm rule /Common/r1 {\n"
-        '    when CLIENT_ACCEPTED { log "see /Common/foo for ref" }\n'
+        "ltm monitor http /Common/m1 {\n"
+        '    send "see /Common/foo for ref"\n'
         "}\n"
     )
     sanitized, diag = _scan_and_substitute(src)
     assert len(diag.qstring_contains_identifier) >= 1
-    # QSTRING content is emitted verbatim — no Tcl-lexer yet.
+    # Non-iRule QSTRING content is emitted verbatim.
     assert '"see /Common/foo for ref"' in sanitized
 
 

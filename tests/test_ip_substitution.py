@@ -192,15 +192,16 @@ def test_description_embedded_ip_redacted_in_v004():
 
 
 def test_bare_qstring_with_ip_fires_qstring_diagnostic():
-    """A bare QSTRING (NOT inside a description) containing a ledger
-    original surfaces via qstring_contains_identifier — orthogonal to the
-    description path."""
+    """A bare QSTRING (NOT inside a description, NOT inside an
+    ``ltm rule`` body) containing a ledger original surfaces via
+    qstring_contains_identifier — orthogonal to the description path
+    and to v0.0.12's iRule-body Tcl-string substitution."""
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.42\n"
         "}\n"
-        "ltm rule /Common/r1 {\n"
-        '    "raw 10.0.0.42 reference"\n'
+        "ltm monitor http /Common/m1 {\n"
+        '    send "raw 10.0.0.42 reference"\n'
         "}\n"
     )
     ledger, diag = scan(src)

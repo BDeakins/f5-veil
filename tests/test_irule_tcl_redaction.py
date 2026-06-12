@@ -1,9 +1,13 @@
 """v0.0.11 — Tcl ``#`` comment redaction inside ``ltm rule`` bodies.
+v0.0.12 — Tcl ``"..."`` string substring substitution inside the same.
 
-Covers pass-1.8 (irule_comment_discovery) + pass-2 substitution + the
-new comment reverse map. Round-trip is byte-exact for every accepted
-shape; out-of-scope shapes (top-level comments, data-group bodies)
-pass through verbatim.
+v0.0.11 covers pass-1.8 (irule_comment_discovery) + pass-2 substitution
+of COMMENT tokens + the new comment reverse map.
+v0.0.12 extends pass-2 / reverse-pass with substring substitution on
+QSTRINGs that fall inside an ``ltm rule /path { ... }`` body. Round-trip
+is byte-exact for every accepted shape; out-of-scope shapes (top-level
+comments, data-group bodies, monitor QSTRINGs) pass through verbatim
+and surface via ``qstring_contains_identifier`` where applicable.
 """
 
 from __future__ import annotations
@@ -248,3 +252,272 @@ def test_leak_detector_does_not_flag_irule_comment_placeholder():
     assert all(
         "IRULE_COMMENT_0001" not in lk.token for lk in report.leaks
     ), [lk for lk in report.leaks if "IRULE_COMMENT" in lk.token]
+
+
+# =====================================================================
+# v0.0.12 — Tcl QSTRING substring substitution inside iRule bodies
+# =====================================================================
+
+
+def test_irule_qstring_pool_path_redacted():
+    """A path identifier embedded in a Tcl string inside an iRule body
+    is substituted in place to its rendered placeholder."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        "    when HTTP_REQUEST {\n"
+        '        log local0. "routed to /Common/foo_pool"\n'
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    assert "/Common/foo_pool" not in sanitized
+    assert '"routed to /Common/POOL_0001"' in sanitized
+    # The diagnostic must NOT fire — v0.0.12 contract is that iRule QSTRINGs
+    # get substituted, not flagged.
+    assert diag.qstring_contains_identifier == []
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_ip_literal_redacted():
+    """An IP literal embedded in a Tcl string inside an iRule body is
+    substituted to its RFC 5737 docs-range form."""
+    src = (
+        "ltm node /Common/web1 {\n"
+        "    address 10.0.0.42\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "client connected from 10.0.0.42"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    assert "10.0.0.42" not in sanitized
+    assert "192.0.2.42" in sanitized
+    assert diag.qstring_contains_identifier == []
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_multiple_identifiers_in_one_string():
+    """A single Tcl string containing several identifiers gets each
+    substituted independently; round-trip is byte-exact."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm pool /Common/bar_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "primary=/Common/foo_pool fallback=/Common/bar_pool"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "foo_pool" not in sanitized
+    assert "bar_pool" not in sanitized
+    assert "/Common/POOL_0001" in sanitized
+    assert "/Common/POOL_0002" in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_word_boundary_prevents_false_match():
+    """A ledger original that is a strict substring inside a longer
+    word-character run must NOT match — otherwise a token like
+    ``foo_pool_alt`` would be partially substituted to
+    ``POOL_0001_alt``."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "container=/Common/foo_pool_extra"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    # The whole compound stays verbatim — partial substitution would be
+    # a leak (placeholder mixed with original suffix).
+    assert "/Common/foo_pool_extra" in sanitized
+    assert "POOL_0001_extra" not in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_partition_name_redacted():
+    """A non-Common partition name embedded as a Tcl string substring
+    is substituted to its PARTITION_NNNN placeholder."""
+    src = (
+        "ltm pool /Tenant_A/p1 {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "tenant=Tenant_A"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "Tenant_A" not in sanitized
+    assert "PARTITION_0001" in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_no_match_is_verbatim():
+    """A Tcl string containing no ledger original is emitted unchanged
+    (including round-trip)."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "unrelated message"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    assert '"unrelated message"' in sanitized
+    assert diag.qstring_contains_identifier == []
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_builtin_profile_not_substituted_from_string():
+    """A built-in TMOS profile name (``http``, ``tcp``, etc.) is exempt
+    from substitution — there is no ledger entry for it — so iRule
+    strings containing it pass through verbatim."""
+    src = (
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "selected http profile"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert '"selected http profile"' in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_qstring_outside_irule_body_unchanged_diagnostic_fires():
+    """A QSTRING in a non-iRule context (monitor send-string) keeps the
+    legacy verbatim emit + qstring_contains_identifier diagnostic. This
+    is the v0.0.12 scope boundary: only ``ltm rule`` body QSTRINGs are
+    substituted."""
+    src = (
+        "ltm node /Common/web1 {\n"
+        "    address 10.0.0.42\n"
+        "}\n"
+        "ltm monitor http /Common/m1 {\n"
+        '    send "GET / HTTP/1.0 from 10.0.0.42"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    # Verbatim — probe payloads sometimes need original bytes.
+    assert "10.0.0.42" in sanitized
+    # Diagnostic fires for non-iRule QSTRING with identifier substring.
+    assert diag.qstring_contains_identifier != []
+
+
+def test_qstring_inside_data_group_body_unchanged():
+    """v0.0.12 scope is ``ltm rule`` bodies only — ``ltm data-group``
+    bodies (which can also embed Tcl-shaped content) pass through."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm data-group internal /Common/dg1 {\n"
+        '    records {\n'
+        '        key1 { data "see /Common/foo_pool" }\n'
+        "    }\n"
+        "    type string\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    # Data-group body QSTRINGs are NOT substituted; the identifier
+    # substring stays verbatim. Out-of-scope, documented.
+    assert "/Common/foo_pool" in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_substitution_records_references():
+    """Each substring substitution inside an iRule QSTRING records a Ref
+    on the underlying ledger entry — non-zero reference counts and the
+    orphan diagnostic stays clean."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "pool=/Common/foo_pool"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, diag = substitute(src, ledger, diag)
+    pool_entry = ledger.entries["POOL_0001"]
+    assert len(pool_entry.references) >= 1
+    assert diag.orphan_entries == []
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_longest_match_wins():
+    """When two ledger originals could match at a position, the longest
+    wins — protecting compound paths like ``/Common/foo_extra`` from
+    being partially substituted via a shorter ``/Common/foo`` candidate.
+    """
+    src = (
+        "ltm pool /Common/foo {\n"
+        "}\n"
+        "ltm pool /Common/foo_extra {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "ref /Common/foo_extra here"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    # The longer path takes precedence; we must not see a partial
+    # ``/Common/POOL_0001_extra`` mash-up.
+    assert "/Common/POOL_0002" in sanitized
+    assert "POOL_0001_extra" not in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_multiple_rule_bodies_all_substituted():
+    """Two separate iRule blocks both get their QSTRINGs substituted."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "from r1: /Common/foo_pool"\n'
+        "}\n"
+        "ltm rule /Common/r2 {\n"
+        '    log local0. "from r2: /Common/foo_pool"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert sanitized.count("/Common/POOL_0001") >= 2
+    assert "foo_pool" not in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_irule_qstring_with_escaped_quote_substring_substituted():
+    """A Tcl string containing an escaped quote (``\\"``) still gets
+    substring substitution and round-trips byte-exactly."""
+    src = (
+        "ltm pool /Common/foo_pool {\n"
+        "}\n"
+        "ltm rule /Common/r1 {\n"
+        '    log local0. "marker=\\"/Common/foo_pool\\" end"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "/Common/foo_pool" not in sanitized
+    assert "/Common/POOL_0001" in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src

@@ -36,18 +36,23 @@ substitution is strictly enforced.
 
 Known gaps deferred to follow-up PRs (each surfaces as a Diagnostics
 entry where applicable so callers can fail closed):
-- QSTRING content substitution. ``"foo /Common/bar baz"`` containing a
-  ledger original surfaces ``qstring_contains_identifier`` but the
-  string body is emitted verbatim.
+- QSTRING content substitution OUTSIDE iRule bodies. ``"foo /Common/bar
+  baz"`` containing a ledger original still surfaces
+  ``qstring_contains_identifier`` but the string body is emitted
+  verbatim — monitor send-strings etc. can legitimately need original
+  bytes (probe payloads), so we surface the diagnostic instead of
+  mutating.
 - ``description "..."`` and ``description { ... }`` values pass through
   verbatim and surface in ``unredacted_description``. DESC_NNNN minting
   is deferred to a dedicated 'pass 1.5: free-text discovery' PR.
 - Folder-nested object paths (``/Common/folder/sub/leaf``) collapse the
   folder into the leaf placeholder; folder semantics are not preserved.
-- Tcl-string-aware substring substitution inside iRule bodies. Bare
-  path-shaped barewords inside rule bodies are substituted normally;
-  paths embedded in Tcl strings (``"..."``) only surface as
-  ``qstring_contains_identifier`` — deferred to v0.0.12.
+- Tcl-string-aware substring substitution inside iRule bodies landed in
+  v0.0.12: QSTRINGs inside ``ltm rule /path { ... }`` bodies have their
+  content scanned for substrings matching any non-DESC, non-IRULE_COMMENT
+  ledger original; matches are substituted in place with word-boundary
+  guards on both sides. QSTRINGs outside iRule bodies keep the legacy
+  verbatim emit + ``qstring_contains_identifier`` diagnostic.
 - Tcl ``#`` comments inside ``ltm rule`` bodies are redacted in v0.0.11
   via :func:`veil.irule_comment_discovery.discover_irule_comments` +
   ledger lookup in :func:`_emit_token`. Top-level COMMENT tokens
@@ -66,7 +71,7 @@ entry where applicable so callers can fail closed):
 from __future__ import annotations
 
 from .diagnostics import Diagnostics
-from .ledger import Kind, Ledger, LedgerEntry, Ref
+from .ledger import COMMON_PARTITION, Kind, Ledger, LedgerEntry, Ref
 from .tokenizer import Token, TokKind, tokenize
 
 # Characters considered "word characters" — a prefix-match WORD token is
@@ -90,23 +95,64 @@ def substitute(
     Freezes the ledger if it isn't already (idempotent). Returns
     ``(sanitized_text, diagnostics)``. The returned diagnostics carries
     forward any pass-1 entries plus pass-2 findings (descriptions,
-    qstring-embedded identifiers, orphan ledger entries).
+    qstring-embedded identifiers outside iRule bodies, orphan ledger
+    entries).
+
+    v0.0.12 tracks ``ltm rule`` body entry via the same depth state
+    machine as :func:`veil.irule_comment_discovery.discover_irule_comments`.
+    Inside an iRule body, QSTRINGs get substring substitution against
+    every non-DESC, non-IRULE_COMMENT ledger original; outside, they
+    keep the legacy verbatim emit + ``qstring_contains_identifier``
+    diagnostic.
     """
     if not ledger.frozen:
         ledger.freeze()
     if diagnostics is None:
         diagnostics = Diagnostics()
     tokens = list(tokenize(src))
+    irule_render_map = _build_substring_render_map(ledger)
     out: list[str] = []
     cursor = 0
+    depth = 0
+    rule_entry_depth: int | None = None
     i = 0
-    while i < len(tokens):
+    n = len(tokens)
+    while i < n:
         tok = tokens[i]
         if tok.offset > cursor:
             out.append(src[cursor:tok.offset])
-        # Description handling: substitute body with DESC_NNNN placeholder
-        # (QSTRING / bareword forms). Braced form deferred to v0.0.5.
-        if tok.kind == TokKind.WORD and tok.value == "description":
+        # ---- Detect ``ltm rule <path> {`` at top level ----
+        if (
+            rule_entry_depth is None
+            and depth == 0
+            and tok.kind == TokKind.WORD
+            and tok.value == "ltm"
+            and i + 3 < n
+            and tokens[i + 1].kind == TokKind.WORD
+            and tokens[i + 1].value == "rule"
+            and tokens[i + 2].kind == TokKind.WORD
+            and tokens[i + 3].kind == TokKind.LBRACE
+        ):
+            # Emit ltm, rule, <path>, { — path goes through _emit_token so
+            # the IRULE entry substitutes normally; the LBRACE passes through.
+            for j in range(4):
+                t = tokens[i + j]
+                if j > 0:
+                    prev = tokens[i + j - 1]
+                    out.append(src[prev.offset + prev.length : t.offset])
+                out.append(_emit_token(t, ledger, diagnostics))
+            rule_entry_depth = depth
+            depth += 1
+            last = tokens[i + 3]
+            cursor = last.offset + last.length
+            i += 4
+            continue
+        # ---- Description handling (TMSH context only, not inside iRule) ----
+        if (
+            rule_entry_depth is None
+            and tok.kind == TokKind.WORD
+            and tok.value == "description"
+        ):
             consumed = _emit_description(
                 tokens, i, src, out, ledger, diagnostics,
             )
@@ -114,7 +160,24 @@ def substitute(
             cursor = last.offset + last.length
             i += consumed
             continue
+        # ---- iRule-body QSTRING: substring substitution ----
+        if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
+            out.append(
+                _substitute_in_irule_qstring(tok, irule_render_map, ledger)
+            )
+            cursor = tok.offset + tok.length
+            i += 1
+            continue
+        # ---- Default emit ----
         out.append(_emit_token(tok, ledger, diagnostics))
+        # Brace tracking AFTER emit so the closing RBRACE of an iRule
+        # body has already been written before we clear rule_entry_depth.
+        if tok.kind == TokKind.LBRACE:
+            depth += 1
+        elif tok.kind == TokKind.RBRACE:
+            depth -= 1
+            if rule_entry_depth is not None and depth == rule_entry_depth:
+                rule_entry_depth = None
         cursor = tok.offset + tok.length
         i += 1
     if cursor < len(src):
@@ -394,51 +457,113 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     then longest-prefix match with non-word boundary, so port-suffix
     tokens like ``/Common/NODE_0001:80`` round-trip back to
     ``/Common/10.0.0.1:80`` cleanly.
+
+    v0.0.12 tracks ``ltm rule`` body entry symmetrically with the
+    forward pass; QSTRINGs inside an iRule body get rendered-placeholder
+    substring substitution back to originals.
     """
     reverse_map = _build_reverse_map(ledger)
     qstring_reverse_map = _build_qstring_reverse_map(ledger)
     comment_reverse_map = _build_comment_reverse_map(ledger)
+    irule_reverse_map = _build_substring_reverse_render_map(ledger)
     tokens = list(tokenize(sanitized))
     out: list[str] = []
     cursor = 0
-    for tok in tokens:
+    depth = 0
+    rule_entry_depth: int | None = None
+    i = 0
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
         if tok.offset > cursor:
             out.append(sanitized[cursor:tok.offset])
-        if tok.kind == TokKind.WORD:
-            if tok.value in reverse_map:
-                out.append(reverse_map[tok.value])
-            else:
-                hit = _find_longest_reverse_prefix(tok.value, reverse_map)
-                if hit is not None:
-                    prefix_len, original = hit
-                    out.append(original + tok.value[prefix_len:])
-                else:
-                    out.append(tok.value)
-        elif tok.kind == TokKind.QSTRING:
-            # DESC_NNNN placeholders inside QSTRINGs (description bodies
-            # in QSTRING form). Key includes the quotes; the value is
-            # the original QSTRING token (also quoted), so the wrapping
-            # restores byte-exactly.
-            if tok.value in qstring_reverse_map:
-                out.append(qstring_reverse_map[tok.value])
-            else:
-                out.append(tok.value)
-        elif tok.kind == TokKind.COMMENT:
-            # IRULE_COMMENT placeholders (v0.0.11) emit as
-            # ``# IRULE_COMMENT_NNNN`` which re-tokenizes back to a
-            # single COMMENT token. Map it back to the original comment
-            # text (which includes the leading ``#`` from pass-1.8's
-            # interning).
-            if tok.value in comment_reverse_map:
-                out.append(comment_reverse_map[tok.value])
-            else:
-                out.append(tok.value)
-        else:
-            out.append(tok.value)
+        # ---- Detect ``ltm rule <path> {`` at top level ----
+        if (
+            rule_entry_depth is None
+            and depth == 0
+            and tok.kind == TokKind.WORD
+            and tok.value == "ltm"
+            and i + 3 < n
+            and tokens[i + 1].kind == TokKind.WORD
+            and tokens[i + 1].value == "rule"
+            and tokens[i + 2].kind == TokKind.WORD
+            and tokens[i + 3].kind == TokKind.LBRACE
+        ):
+            for j in range(4):
+                t = tokens[i + j]
+                if j > 0:
+                    prev = tokens[i + j - 1]
+                    out.append(sanitized[prev.offset + prev.length : t.offset])
+                out.append(
+                    _reverse_emit_token(
+                        t, reverse_map, qstring_reverse_map,
+                        comment_reverse_map,
+                    )
+                )
+            rule_entry_depth = depth
+            depth += 1
+            last = tokens[i + 3]
+            cursor = last.offset + last.length
+            i += 4
+            continue
+        # ---- iRule-body QSTRING: substring reverse substitution ----
+        if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
+            out.append(
+                _reverse_substitute_in_irule_qstring(tok, irule_reverse_map)
+            )
+            cursor = tok.offset + tok.length
+            i += 1
+            continue
+        # ---- Default emit ----
+        out.append(
+            _reverse_emit_token(
+                tok, reverse_map, qstring_reverse_map, comment_reverse_map,
+            )
+        )
+        if tok.kind == TokKind.LBRACE:
+            depth += 1
+        elif tok.kind == TokKind.RBRACE:
+            depth -= 1
+            if rule_entry_depth is not None and depth == rule_entry_depth:
+                rule_entry_depth = None
         cursor = tok.offset + tok.length
+        i += 1
     if cursor < len(sanitized):
         out.append(sanitized[cursor:])
     return "".join(out)
+
+
+def _reverse_emit_token(
+    tok: Token,
+    reverse_map: dict[str, str],
+    qstring_reverse_map: dict[str, str],
+    comment_reverse_map: dict[str, str],
+) -> str:
+    """Pure-function token-level reverse emit shared by the top-level
+    reverse pass and the iRule-rule-header emission path."""
+    if tok.kind == TokKind.WORD:
+        if tok.value in reverse_map:
+            return reverse_map[tok.value]
+        hit = _find_longest_reverse_prefix(tok.value, reverse_map)
+        if hit is not None:
+            prefix_len, original = hit
+            return original + tok.value[prefix_len:]
+        return tok.value
+    if tok.kind == TokKind.QSTRING:
+        # DESC_NNNN placeholders inside QSTRINGs (description bodies in
+        # QSTRING or braced form). Key includes the quotes; the value is
+        # the original QSTRING token (also quoted) or the full braced
+        # span, so the wrapping restores byte-exactly.
+        if tok.value in qstring_reverse_map:
+            return qstring_reverse_map[tok.value]
+        return tok.value
+    if tok.kind == TokKind.COMMENT:
+        # IRULE_COMMENT placeholders (v0.0.11). Key includes the leading
+        # ``#`` so a direct ``tok.value`` lookup works.
+        if tok.value in comment_reverse_map:
+            return comment_reverse_map[tok.value]
+        return tok.value
+    return tok.value
 
 
 def _find_longest_reverse_prefix(
@@ -541,3 +666,183 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
                 )
             rmap[f"/{part_ph}/{entry.placeholder}"] = entry.original
     return rmap
+
+
+# ---------------------------------------------------------------------
+# v0.0.12 — Tcl QSTRING substring substitution inside iRule bodies
+# ---------------------------------------------------------------------
+
+
+def _build_substring_render_map(
+    ledger: Ledger,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """First-char-bucketed substring lookup table for QSTRINGs inside
+    ``ltm rule`` bodies.
+
+    For each non-DESC, non-IRULE_COMMENT ledger entry, computes the
+    rendered placeholder text exactly as pass-2 would emit a standalone
+    WORD reference (path-bearing kinds get ``/Common/POOL_NNNN`` or
+    ``/PARTITION_NNNN/POOL_NNNN`` shape; bare-placeholder kinds emit
+    plain ``PARTITION_NNNN``). Entries are indexed by their original's
+    first character; each bucket is sorted by ``len(original)``
+    descending so callers can scan longest-match-first.
+
+    Skipped: DESC (description bodies don't appear inside Tcl strings as
+    meaningful content) and IRULE_COMMENT (the placeholder is a COMMENT
+    token, not a substring target).
+
+    Returns: ``{first_char: [(original, rendered, placeholder), ...]}``.
+    """
+    by_first_char: dict[str, list[tuple[str, str, str]]] = {}
+    for entry in ledger.entries.values():
+        if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
+            continue
+        if not entry.original:
+            continue
+        rendered = _rendered_for_substring(entry, ledger)
+        if rendered is None:
+            continue
+        first = entry.original[0]
+        by_first_char.setdefault(first, []).append(
+            (entry.original, rendered, entry.placeholder)
+        )
+    for lst in by_first_char.values():
+        lst.sort(key=lambda x: -len(x[0]))
+    return by_first_char
+
+
+def _build_substring_reverse_render_map(
+    ledger: Ledger,
+) -> dict[str, list[tuple[str, str]]]:
+    """Reverse counterpart of :func:`_build_substring_render_map`. Same
+    eligibility rules; indexed by the rendered placeholder's first
+    character; each bucket sorted by ``len(rendered)`` descending.
+
+    Returns: ``{first_char: [(rendered, original), ...]}``.
+    """
+    by_first_char: dict[str, list[tuple[str, str]]] = {}
+    for entry in ledger.entries.values():
+        if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
+            continue
+        if not entry.original:
+            continue
+        rendered = _rendered_for_substring(entry, ledger)
+        if rendered is None:
+            continue
+        first = rendered[0]
+        by_first_char.setdefault(first, []).append((rendered, entry.original))
+    for lst in by_first_char.values():
+        lst.sort(key=lambda x: -len(x[0]))
+    return by_first_char
+
+
+def _rendered_for_substring(entry: LedgerEntry, ledger: Ledger) -> str | None:
+    """Compute the rendered placeholder string for a substring-substitution
+    target. Returns ``None`` to signal the caller should skip this entry
+    (only fires when a non-Common partition entry lacks its PARTITION
+    placeholder — a ledger inconsistency the forward pass would already
+    have crashed on for any path-token reference, so silently skipping
+    here is safe)."""
+    if entry.kind == Kind.PARTITION:
+        return entry.placeholder
+    if entry.partition is None:
+        return entry.placeholder
+    if entry.partition == COMMON_PARTITION:
+        return f"/Common/{entry.placeholder}"
+    part_ph = ledger.by_original.get((Kind.PARTITION, entry.partition))
+    if part_ph is None:
+        return None
+    return f"/{part_ph}/{entry.placeholder}"
+
+
+def _substitute_in_irule_qstring(
+    tok: Token,
+    by_first_char: dict[str, list[tuple[str, str, str]]],
+    ledger: Ledger,
+) -> str:
+    """Substring-substitute identifier originals inside a Tcl QSTRING
+    that falls within an ``ltm rule`` body.
+
+    Walks the QSTRING value character-by-character; at each position the
+    first-char bucket of candidates is consulted longest-first. A match
+    is accepted only when both sides are non-word characters (or the
+    string boundary) so ``mypool1`` does not false-match a ``pool1``
+    ledger original. On match, emits the rendered placeholder, records
+    a Ref, and advances past the match. Otherwise emits one char
+    verbatim and advances by 1.
+
+    The wrapping ``"..."`` quotes are part of ``tok.value`` and pass
+    through unchanged because ``"`` is a non-word boundary; substitutions
+    never overlap the quotes themselves.
+    """
+    s = tok.value
+    n = len(s)
+    parts: list[str] = []
+    i = 0
+    while i < n:
+        ch = s[i]
+        candidates = by_first_char.get(ch, ())
+        matched = False
+        for original, rendered, placeholder in candidates:
+            olen = len(original)
+            if i + olen > n:
+                continue
+            if not s.startswith(original, i):
+                continue
+            left_ok = (i == 0) or (s[i - 1] not in _WORD_CHARS)
+            right_pos = i + olen
+            right_ok = (right_pos == n) or (s[right_pos] not in _WORD_CHARS)
+            if not (left_ok and right_ok):
+                continue
+            parts.append(rendered)
+            ledger.record_reference(
+                placeholder,
+                Ref(
+                    byte_offset=tok.offset + i,
+                    length=olen,
+                    line=tok.line,
+                ),
+            )
+            i = right_pos
+            matched = True
+            break
+        if not matched:
+            parts.append(ch)
+            i += 1
+    return "".join(parts)
+
+
+def _reverse_substitute_in_irule_qstring(
+    tok: Token,
+    by_first_char: dict[str, list[tuple[str, str]]],
+) -> str:
+    """Reverse of :func:`_substitute_in_irule_qstring`: walk the
+    sanitized QSTRING and replace each rendered-placeholder substring
+    with the original ledger value. Same word-boundary protection."""
+    s = tok.value
+    n = len(s)
+    parts: list[str] = []
+    i = 0
+    while i < n:
+        ch = s[i]
+        candidates = by_first_char.get(ch, ())
+        matched = False
+        for rendered, original in candidates:
+            rlen = len(rendered)
+            if i + rlen > n:
+                continue
+            if not s.startswith(rendered, i):
+                continue
+            left_ok = (i == 0) or (s[i - 1] not in _WORD_CHARS)
+            right_pos = i + rlen
+            right_ok = (right_pos == n) or (s[right_pos] not in _WORD_CHARS)
+            if not (left_ok and right_ok):
+                continue
+            parts.append(original)
+            i = right_pos
+            matched = True
+            break
+        if not matched:
+            parts.append(ch)
+            i += 1
+    return "".join(parts)

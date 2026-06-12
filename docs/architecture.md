@@ -1,17 +1,19 @@
 # f5-veil Architecture
 
-Status: v0.0.11 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
-pass-1.8 (iRule `#` comment) + pass-2 substitution + AES-256-GCM answer
-file + obfuscate/deobfuscate CLI + leak detector with `--strict`.
-Object scope: LTM pool / virtual / node / monitor / rule / partition
-/ profile / data-group / snat / snatpool / virtual-address, GTM pool /
-wideip / server / datacenter / region, net vlan / route-domain / self
-/ trunk, APM policy / profile, security firewall policy / rule-list /
+Status: v0.0.12 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+pass-1.8 (iRule `#` comment) + pass-2 substitution (Tcl-string-aware
+inside `ltm rule` bodies) + AES-256-GCM answer file +
+obfuscate/deobfuscate CLI + leak detector with `--strict`. Object scope:
+LTM pool / virtual / node / monitor / rule / partition / profile /
+data-group / snat / snatpool / virtual-address, GTM pool / wideip /
+server / datacenter / region, net vlan / route-domain / self / trunk,
+APM policy / profile, security firewall policy / rule-list /
 address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
-AND braced descriptions**; **Tcl `#` comments inside `ltm rule`
-bodies**. gtm topology, net interface, security dos, apm aaa/sso/acl,
-full ASM coverage still pending. Tcl-string substring substitution
-inside iRule bodies is the next cycle (v0.0.12).
+AND braced descriptions**; **Tcl `#` comments AND Tcl `"..."` string
+substring substitution inside `ltm rule` bodies**. gtm topology, net
+interface, security dos, apm aaa/sso/acl, full ASM coverage, and
+`auth remote-role` / AD-group-DN obfuscation still pending — v0.0.13+
+scope.
 
 ## Goal
 
@@ -413,12 +415,28 @@ src/veil/
 - **`description` aggressive redaction.** Pass 2 emits descriptions
   verbatim plus an `unredacted_description` diagnostic. A 'pass 1.5:
   free-text discovery' PR will mint `DESC_NNNN` placeholders.
-- **Tcl-string-aware substring substitution inside iRule bodies.** Bare
-  path-shaped barewords inside rule bodies substitute normally; paths
-  embedded in Tcl strings (`"..."`) only surface as
-  `qstring_contains_identifier` — substring substitution is v0.0.12
-  scope. Tcl `#` comments inside rule bodies are redacted in v0.0.11
+- **Tcl-string-aware substring substitution inside iRule bodies** —
+  landed in v0.0.12. Pass-2 tracks `ltm rule /path { ... }` body entry
+  via the same depth state machine as `irule_comment_discovery`;
+  QSTRINGs inside an iRule body have their content scanned for
+  substrings matching any non-DESC, non-IRULE_COMMENT ledger original,
+  with each match substituted in place to the rendered placeholder.
+  Word-boundary check on both sides prevents false matches (so
+  `foo_pool_extra` stays verbatim when `foo_pool` is a ledger original).
+  Reverse pass tracks the same state machine and substring-replaces
+  rendered placeholders back to originals. Out-of-scope QSTRINGs
+  (monitor send-strings, data-group records, anything else outside an
+  `ltm rule` body) keep the legacy verbatim emit +
+  `qstring_contains_identifier` diagnostic. Tcl `#` comments inside
+  rule bodies are redacted via v0.0.11's `Kind.IRULE_COMMENT` path
   (see above).
+- **`auth remote-role` / AD-group-DN obfuscation** — deferred to
+  v0.0.13. `auth remote-role role-info` blocks store AD group DNs
+  (`CN=BIG-IP_Admins,OU=Groups,DC=corp,DC=example,DC=com`) verbatim
+  in the `attribute` field; partition root references and APM
+  `aaa active-directory` may carry similar values. Needs a dedicated
+  kind (e.g. `Kind.AD_GROUP_DN`) and either pass-1.9 discovery + pass-2
+  emit symmetry with DESC handling.
 - **Profile, SNAT, data-group, ASM, GTM, VLAN, cert, route-domain
   kinds.** Each unknown top-level block surfaces as
   `unknown_top_level` diagnostic; pass-2 callers fail closed.
