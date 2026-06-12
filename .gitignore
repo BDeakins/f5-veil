@@ -11,6 +11,15 @@ test_configs/real/
 *.ucs
 
 # ============================================================================
+# Session / handoff state — may contain personal network info, hostnames,
+# customer device names, etc. Used to prime new Claude Code sessions; not
+# part of the project history. NEVER commit.
+# ============================================================================
+BRIDGE_NEXT_SESSION.md
+CLAUDE.md
+.claude/
+
+# ============================================================================
 # Python
 # ============================================================================
 __pycache__/
