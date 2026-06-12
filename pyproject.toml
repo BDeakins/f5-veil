@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "f5-veil"
-version = "0.0.1"
+version = "1.0.0"
 description = "F5 BIG-IP config obfuscator/de-obfuscator — sanitize customer configs for safe AI analysis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ keywords = [
     "ai-safety",
 ]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: System Administrators",
     "Intended Audience :: Information Technology",
