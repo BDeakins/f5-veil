@@ -44,3 +44,13 @@ class Diagnostics:
     references during pass 2. Signals a discovery / substitution
     mismatch — the cross-reference integrity contract from the locked
     architecture."""
+
+    # ----- Pass 1.5 (IP discovery) findings -----------------------------
+
+    ipv4_subnet_collapsed: list[str] = field(default_factory=list)
+    """Source ``/24`` networks whose host addresses had to be packed into
+    a shared RFC 5737 docs ``/24`` because the configuration spanned more
+    than 3 distinct source ``/24``s (RFC 5737 has 3 ``/24``s total). AI
+    tools lose subnet-co-location signal for collapsed nets but the
+    round-trip mapping remains exact. Pass-2 callers can treat this as a
+    warning, not a fail-closed condition."""

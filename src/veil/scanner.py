@@ -32,6 +32,7 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from .diagnostics import Diagnostics
+from .ip_discovery import discover_ip_literals
 from .ledger import Kind, Ledger, Ref
 from .tokenizer import Token, TokKind, tokenize
 
@@ -95,6 +96,11 @@ def scan(
             depth = 1
             continue
         i += 1
+    # Pass 1.5 — bare IP literal discovery. Runs over the full token
+    # stream (not constrained to top-level) because IP literals appear
+    # in body context (``address 10.0.0.42``, ``destination 10.0.0.1:80``,
+    # etc.). Must run before freeze.
+    discover_ip_literals(src, ledger, diagnostics)
     return ledger, diagnostics
 
 

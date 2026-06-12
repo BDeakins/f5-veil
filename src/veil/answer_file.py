@@ -280,6 +280,7 @@ def _payload_to_bytes(ledger: Ledger, diagnostics: Diagnostics) -> bytes:
                 list(t) for t in diagnostics.qstring_contains_identifier
             ],
             "orphan_entries": list(diagnostics.orphan_entries),
+            "ipv4_subnet_collapsed": list(diagnostics.ipv4_subnet_collapsed),
         },
     }
     return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8")
@@ -343,4 +344,5 @@ def _diagnostics_from_dict(d: dict) -> Diagnostics:
             tuple(x) for x in d.get("qstring_contains_identifier", [])
         ],
         orphan_entries=list(d.get("orphan_entries", [])),
+        ipv4_subnet_collapsed=list(d.get("ipv4_subnet_collapsed", [])),
     )

@@ -1,9 +1,10 @@
 # f5-veil Architecture
 
-Status: v0.0.2 — pass-1 scanner + ledger + pass-2 substitution + AES-256-GCM
-answer file + `veil obfuscate` / `veil deobfuscate` CLI + post-substitution
-leak detector with `--strict` mode landed. Tracer-bullet object scope only
-(pool, virtual, node, monitor, rule, partition). Description redaction and
+Status: v0.0.3 — pass-1 scanner + pass-1.5 IP discovery + pass-2
+substitution + AES-256-GCM answer file + `veil obfuscate` /
+`veil deobfuscate` CLI + post-substitution leak detector with `--strict`.
+Tracer-bullet object scope (pool, virtual, node, monitor, rule, partition)
+plus bare IPv4/IPv6 literals in body context. Description redaction and
 full GTM/profile/ASM coverage still pending.
 
 ## Goal
@@ -13,9 +14,10 @@ typed placeholder, store the originals in an encrypted answer file, and
 restore them on the reverse pass — so engineers can collaborate with
 third-party AI tools without exfiltrating customer data.
 
-## Two-pass pipeline
+## Pipeline
 
-The obfuscator runs in two passes over `bigip.conf`:
+The obfuscator runs in three passes over `bigip.conf` (pass 1.5 is
+embedded inside `scan()` and is invisible to callers):
 
 ### Pass 1 — discovery (`veil.scanner.scan`)
 
@@ -36,6 +38,20 @@ The obfuscator runs in two passes over `bigip.conf`:
 5. Freeze the ledger via `Ledger.freeze()`. Once frozen, no new
    placeholders can be minted — the answer file persisted from this
    state is authoritative for pass 2 and for deobfuscation.
+
+### Pass 1.5 — IP-literal discovery (`veil.ip_discovery.discover_ip_literals`)
+
+Called by `scan()` immediately before `ledger.freeze()`. Walks the same
+token stream looking for WORD tokens that are (or lead with) an IPv4 or
+IPv6 address literal. Each unique IP is interned as `Kind.IPADDR`. Token
+forms covered: bare, `:port`, `%route-domain`, `%rd:port`, CIDR `/mask`.
+Bracketed IPv6 `[fc00::1]:80` deferred to v0.0.4.
+
+Skipped: TMSH wildcards (`0.0.0.0`, `::`, `any`, `any6`); IPv4 netmasks
+(contiguous-high-bits pattern detection — covers `255.255.255.0`,
+`255.255.0.0`, etc.); IPs inside QSTRINGs (out of scope — emitted
+verbatim by pass 2 and surfaced via `qstring_contains_identifier`); IPs
+inside `description` values (surfaced via `unredacted_description`).
 
 ### Pass 2 — substitution (`veil.substitute.substitute`)
 
@@ -85,6 +101,7 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `MON` | `MON_0001` | `/Common/http_mon_app` |
 | `IRULE` | `IRULE_0001` | `/Common/my_redirect_rule` |
 | `PARTITION` | `PARTITION_0001` | `Tenant_A` (note: `Common` is exempt) |
+| `IPADDR` | `203.0.113.42` (rendered docs IP, not `IPADDR_NNNN`) | `10.0.0.42` |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -108,11 +125,66 @@ forklift migration for cross-run consistency in v2.0.
 
 ## IP placeholders
 
-- IPv4: RFC 5737 documentation ranges (`192.0.2/24`, `198.51.100/24`,
-  `203.0.113/24`). Preserves IP shape and subnet masks for AI reasoning.
-- IPv6: RFC 3849 (`2001:db8::/32`).
+- **IPv4**: RFC 5737 documentation ranges (`192.0.2.0/24`,
+  `198.51.100.0/24`, `203.0.113.0/24`). Source `/24` structure is
+  preserved first-seen-first-allocated: the first source `/24`
+  encountered maps to `192.0.2.0/24`, the second to `198.51.100.0/24`,
+  the third to `203.0.113.0/24`. Host octets within a `/24` are
+  preserved (`10.0.0.42` → `192.0.2.42` if `10.0.0.0/24` got the first
+  slot).
+- **IPv6**: RFC 3849 (`2001:db8::/32`). Source `/64` structure preserved
+  by sequential allocation; pool holds 2^32 source `/64`s — exhaustion
+  is not a real-world concern.
 
-IP substitution is part of pass 2 and is not yet implemented.
+### Subnet-pool exhaustion (IPv4)
+
+RFC 5737 provides only 3 `/24`s. Configurations spanning more than 3
+source `/24`s collapse the 4th and later into the shared pool, packing
+into whatever address slots aren't claimed by the first 3 preserved
+mappings. Round-trip remains exact; only AI-side subnet co-location
+signal is reduced. Collapsed source nets surface via
+`Diagnostics.ipv4_subnet_collapsed` and the CLI prints them as an
+informational warning (NOT a fail-closed trigger).
+
+Hard exhaustion (768 host slots across all 3 `/24`s) raises
+`RuntimeError`. Larger pools deferred to v0.0.4.
+
+### IPADDR placeholder model
+
+Unlike other kinds, `Kind.IPADDR` does **not** use opaque `KIND_NNNN`
+placeholders. The `LedgerEntry.placeholder` field IS the rendered
+docs-range address string (`203.0.113.42`), so sanitized output reads
+as a normal IP for AI tooling. The reverse map keys on the rendered
+form for round-trip.
+
+### Coexistence with NODE
+
+When a NODE path's leaf is itself an IP (e.g. `ltm node /Common/10.0.0.42`),
+the path retains its `NODE_NNNN` placeholder (`/Common/NODE_0001`) for
+path references. Bare IP literals in body context render via the IPADDR
+mapping (`address 192.0.2.42`). The two forms coexist intentionally;
+reverse substitution handles both. Future PR may unify NODE-leaf
+rendering with IPADDR for visual consistency.
+
+### Wildcards and netmasks
+
+NOT substituted (NOT customer-identifying):
+- `0.0.0.0`, `::` — TMSH wildcards
+- IPv4 contiguous-high-bits masks: `255.255.255.0`, `255.255.0.0`,
+  `255.0.0.0`, `255.255.255.255`, etc.
+
+`::1` (IPv6 loopback) IS interned and substituted — it's a leak under
+the v0.0.2 leak detector, not a wildcard.
+
+### Out of scope for v0.0.3
+
+- IPs inside `description "..."` bodies — emitted verbatim,
+  `unredacted_description` fires.
+- IPs inside arbitrary QSTRINGs — emitted verbatim; if the IP is also a
+  ledger original (because it appears as a WORD elsewhere), the
+  `qstring_contains_identifier` check fires.
+- IPs inside iRule Tcl strings or `#` comments — deferred to Tcl-lexer PR.
+- Bracketed IPv6 form `[fc00::1]:80` — deferred to v0.0.4.
 
 ## Answer file (`veil.answer_file`)
 
@@ -211,6 +283,9 @@ src/veil/
   tokenizer.py       Token, TokKind, tokenize(src)
   diagnostics.py     Diagnostics (shared by scanner + substitute)
   scanner.py         scan(src) -> (Ledger, Diagnostics)
+                     (drives pass 1 + invokes pass 1.5 before freeze)
+  ip_discovery.py    discover_ip_literals(src, ledger, diag)
+                     (pass 1.5 — bare IP literal interning)
   substitute.py      substitute(src, ledger, diag), reverse_substitute(...)
   answer_file.py     write_answer_file(...), read_answer_file(...),
                      AnswerFileError
@@ -249,9 +324,12 @@ src/veil/
 
 ## Known gaps (deferred to follow-up PRs)
 
-- **CLI wiring + answer file** (next PR). The library functions exist
-  but no `veil obfuscate` / `veil deobfuscate` subcommand is wired,
-  and the AES-256-GCM answer file format is not yet implemented.
+- **CLI wiring + answer file** — landed in v0.0.1.
+- **Leak detector + `--strict`** — landed in v0.0.2.
+- **Bare IP literal substitution in body context** — landed in v0.0.3.
+- **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.
+- **Larger IPv4 docs pool** for configs exceeding the RFC 5737 768-host
+  cap — v0.0.4 follow-up.
 - **`description` aggressive redaction.** Pass 2 emits descriptions
   verbatim plus an `unredacted_description` diagnostic. A 'pass 1.5:
   free-text discovery' PR will mint `DESC_NNNN` placeholders.

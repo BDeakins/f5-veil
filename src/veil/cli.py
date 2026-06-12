@@ -163,6 +163,7 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
     diag_report = _diagnostics_summary(diag)
+    warnings_report = _diagnostics_warnings_summary(diag)
     leak_report = scan_leaks(sanitized)
 
     if args.dry_run:
@@ -177,6 +178,9 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
     if diag_report:
         _err("warning: proceeding with --allow-incomplete:")
         _err(diag_report)
+    if warnings_report:
+        _err("informational warnings (round-trip remains exact):")
+        _err(warnings_report)
 
     if leak_report:
         leak_summary = _leak_report_summary(leak_report)
@@ -437,6 +441,26 @@ def _diagnostics_summary(diag: Diagnostics) -> str:
         if len(diag.orphan_entries) > 5:
             lines.append(
                 f"    ... and {len(diag.orphan_entries) - 5} more"
+            )
+    return "\n".join(lines)
+
+
+def _diagnostics_warnings_summary(diag: Diagnostics) -> str:
+    """Diagnostics fields that are informational only — round-trip is
+    intact and obfuscation is complete. Surfaced to the operator but
+    never fail-closed."""
+    lines: list[str] = []
+    if diag.ipv4_subnet_collapsed:
+        lines.append(
+            f"  IPv4 source /24s collapsed into shared docs pool: "
+            f"{len(diag.ipv4_subnet_collapsed)} "
+            f"(round-trip exact; AI-side subnet co-location reduced)"
+        )
+        for net in diag.ipv4_subnet_collapsed[:5]:
+            lines.append(f"    {net}")
+        if len(diag.ipv4_subnet_collapsed) > 5:
+            lines.append(
+                f"    ... and {len(diag.ipv4_subnet_collapsed) - 5} more"
             )
     return "\n".join(lines)
 
