@@ -4,20 +4,18 @@ Walks the token stream after pass-1 and pass-1.5 but before ledger
 freeze, registering every ``description`` value as a ``Kind.DESC``
 entry. Pass-2 substitution then redacts the body to its placeholder.
 
-Supported forms (v0.0.4):
+Supported forms (v0.0.10):
 
 - ``description "quoted body"`` — QSTRING value. Most common in real
   configs. Full byte-exact round-trip.
 - ``description bareword`` — single-WORD value. Full byte-exact
   round-trip.
-
-Deferred to v0.0.5:
-
-- ``description { braced body }`` — multi-line braced value. Today the
-  body passes through verbatim and still surfaces in
-  ``unredacted_description``; v0.0.5 will add per-reference whitespace
-  metadata so inner-brace whitespace can round-trip byte-exactly. Real
-  configs use the QSTRING form overwhelmingly, so this gap is small.
+- ``description { braced body }`` — multi-line braced value. The full
+  ``{...}`` span (including braces and inner whitespace) is stored as
+  the entry's ``original``. Pass-2 emits ``"DESC_NNNN"`` (QSTRING form)
+  in place; the reverse pass's qstring map restores the original
+  braced span byte-exactly because the original IS the full
+  braces-included text.
 
 Dedup model: the ``original`` field stores the FULL token text including
 its wrapping (so ``"primary node"`` for QSTRING form, ``primary`` for
@@ -48,6 +46,10 @@ def discover_descriptions(
             "description_discovery must run before ledger.freeze()"
         )
     tokens = list(tokenize(src))
+    _walk_descriptions(src, tokens, ledger)
+
+
+def _walk_descriptions(src, tokens, ledger):
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -83,6 +85,46 @@ def discover_descriptions(
             )
             i += 2
             continue
-        # Braced form deferred to v0.0.5 — leave the description for
-        # pass-2 to surface as ``unredacted_description``.
+        # Braced form: ``description { ... }`` — walk to matching RBRACE
+        # tracking brace depth, intern the full braced span (LBRACE
+        # through RBRACE inclusive) including any internal whitespace.
+        if next_tok.kind == TokKind.LBRACE:
+            span_text = _collect_braced_span(src, tokens, i + 1)
+            if span_text:
+                ref = Ref(
+                    byte_offset=next_tok.offset,
+                    length=len(span_text),
+                    line=next_tok.line,
+                )
+                ledger.intern(
+                    Kind.DESC, span_text, ref, partition=None,
+                )
+            i += 1  # advance past description; the LBRACE/body/RBRACE
+                    # are consumed by the substitute pass via its own
+                    # walker (pass-1.7 just records what's there).
+            continue
         i += 1
+
+
+def _collect_braced_span(src, tokens, lbrace_idx) -> str:
+    """Return the full ``{...}`` byte span starting at ``tokens[lbrace_idx]``
+    (the LBRACE) through its matching RBRACE inclusive. Empty string if
+    no matching RBRACE found (malformed input)."""
+    if lbrace_idx >= len(tokens):
+        return ""
+    lbrace = tokens[lbrace_idx]
+    if lbrace.kind != TokKind.LBRACE:
+        return ""
+    depth = 1
+    j = lbrace_idx + 1
+    while j < len(tokens) and depth > 0:
+        t = tokens[j]
+        if t.kind == TokKind.LBRACE:
+            depth += 1
+        elif t.kind == TokKind.RBRACE:
+            depth -= 1
+        if depth == 0:
+            end_offset = t.offset + t.length
+            return src[lbrace.offset:end_offset]
+        j += 1
+    return ""

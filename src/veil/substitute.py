@@ -267,28 +267,56 @@ def _emit_description(
             out.append(next_tok.value)
         return 2
     if next_tok.kind == TokKind.LBRACE:
-        # Braced form — deferred to v0.0.5. Keep legacy verbatim emit
-        # and surface ``unredacted_description`` so callers still
-        # fail-closed on non-empty braced descriptions.
-        diagnostics.unredacted_description.append(
-            (desc_tok.offset, desc_tok.line)
-        )
-        out.append(next_tok.value)
+        # Braced form. Pass-1.7 interns the full LBRACE-through-RBRACE
+        # span as the ``original``. We reproduce that exact span here,
+        # look it up, and emit the placeholder in QSTRING form so the
+        # reverse path's qstring_reverse_map handles the round-trip.
+        # Find the matching RBRACE.
         depth = 1
         j = i + 2
-        prev_end = next_tok.offset + next_tok.length
+        end_offset = -1
+        consumed = 1  # description WORD already consumed by caller
         while j < len(tokens) and depth > 0:
             t = tokens[j]
-            if t.offset > prev_end:
-                out.append(src[prev_end:t.offset])
-            out.append(t.value)
             if t.kind == TokKind.LBRACE:
                 depth += 1
             elif t.kind == TokKind.RBRACE:
                 depth -= 1
-            prev_end = t.offset + t.length
+            if depth == 0:
+                end_offset = t.offset + t.length
+                consumed = j - i + 1
+                break
             j += 1
-        return j - i
+        if end_offset < 0:
+            # Malformed — no matching RBRACE. Fall back to verbatim.
+            diagnostics.unredacted_description.append(
+                (desc_tok.offset, desc_tok.line)
+            )
+            out.append(src[next_tok.offset:])
+            return len(tokens) - i
+        span_text = src[next_tok.offset:end_offset]
+        placeholder = ledger.by_original.get((Kind.DESC, span_text))
+        if placeholder is not None:
+            entry = ledger.entries[placeholder]
+            ledger.record_reference(
+                placeholder,
+                Ref(
+                    byte_offset=next_tok.offset,
+                    length=end_offset - next_tok.offset,
+                    line=next_tok.line,
+                ),
+            )
+            out.append(f'"{entry.placeholder}"')
+        else:
+            # Pass-1.7 should have interned every braced description.
+            # If we're here, the descriptions discovered in pass-1.7 and
+            # the ones substituted in pass-2 disagree — fail closed
+            # rather than leaking the body.
+            diagnostics.unredacted_description.append(
+                (desc_tok.offset, desc_tok.line)
+            )
+            out.append(span_text)
+        return consumed
     if next_tok.kind == TokKind.WORD:
         placeholder = ledger.by_original.get((Kind.DESC, next_tok.value))
         if placeholder is not None:
@@ -413,20 +441,23 @@ def _find_longest_reverse_prefix(
 
 def _build_qstring_reverse_map(ledger: Ledger) -> dict[str, str]:
     """Map quoted-placeholder QSTRING values back to their original
-    quoted form, for description redaction in QSTRING form.
+    form, for description redaction (QSTRING form AND braced form,
+    both of which emit ``"DESC_NNNN"`` in sanitized output).
 
     Key: the quoted placeholder as it appears in the sanitized output
     (e.g. ``'"DESC_0001"'``).
-    Value: the original quoted QSTRING (e.g. ``'"primary cluster"'``).
+    Value: the original — either a quoted QSTRING
+    (``'"primary cluster"'``) or a full braced span
+    (``'{ multi line body }'``).
 
-    DESC entries whose ``original`` does not begin with ``"`` are
-    bareword form and handled by the standard WORD reverse map; skip
-    them here."""
+    Bareword-form DESC entries (``original`` starts with neither ``"``
+    nor ``{``) are handled by the standard WORD reverse map and skipped
+    here."""
     rmap: dict[str, str] = {}
     for entry in ledger.entries.values():
         if entry.kind != Kind.DESC:
             continue
-        if not entry.original.startswith('"'):
+        if not (entry.original.startswith('"') or entry.original.startswith("{")):
             continue
         rmap[f'"{entry.placeholder}"'] = entry.original
     return rmap
@@ -446,9 +477,12 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
     """
     rmap: dict[str, str] = {}
     for entry in ledger.entries.values():
-        # QSTRING-form DESC entries are routed through the qstring
-        # reverse map; skip here to avoid spurious WORD-level matches.
-        if entry.kind == Kind.DESC and entry.original.startswith('"'):
+        # QSTRING-form and braced-form DESC entries are routed through
+        # the qstring reverse map; skip here to avoid spurious
+        # WORD-level matches.
+        if entry.kind == Kind.DESC and (
+            entry.original.startswith('"') or entry.original.startswith("{")
+        ):
             continue
         if entry.kind == Kind.PARTITION:
             rmap[entry.placeholder] = entry.original

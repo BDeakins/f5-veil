@@ -92,15 +92,20 @@ def test_quoted_description_redacted_to_placeholder():
     assert diag.unredacted_description == []
 
 
-def test_brace_description_logs_diagnostic_and_passes_through():
+def test_brace_description_redacted_to_placeholder():
+    # v0.0.10: braced-form descriptions are now redacted to DESC_NNNN
+    # placeholders (emitted as "DESC_NNNN" qstring), with the full
+    # braced span stored as the ledger original so reverse restores
+    # byte-exactly.
     src = (
         "ltm pool /Common/foo {\n"
         "    description { customer prod pool 2024 }\n"
         "}\n"
     )
     sanitized, diag = _scan_and_substitute(src)
-    assert "{ customer prod pool 2024 }" in sanitized
-    assert len(diag.unredacted_description) == 1
+    assert "{ customer prod pool 2024 }" not in sanitized
+    assert '"DESC_0001"' in sanitized
+    assert diag.unredacted_description == []
 
 
 def test_qstring_containing_ledger_original_logs_diagnostic():

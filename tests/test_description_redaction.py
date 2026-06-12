@@ -89,18 +89,84 @@ def test_bareword_description_round_trip():
     assert restored == src
 
 
-# ----- braced form (deferred behavior — still fires diagnostic) --------
+# ----- braced form (v0.0.10) -------------------------------------------
 
 
-def test_braced_description_still_fires_unredacted():
-    """Braced form is deferred to v0.0.5 — body still passes through
-    verbatim and the legacy diagnostic still fires so callers can
-    fail-closed if they opt out of incomplete obfuscation."""
+def test_braced_description_redacted():
     src = 'ltm pool /Common/foo {\n    description { multi line body }\n}\n'
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
-    assert "multi line body" in sanitized  # unchanged
-    assert diag.unredacted_description != []
+    assert "multi line body" not in sanitized
+    assert '"DESC_0001"' in sanitized
+    assert diag.unredacted_description == []
+
+
+def test_braced_description_round_trip_single_space():
+    src = 'ltm pool /Common/foo {\n    description { primary cluster }\n}\n'
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_braced_description_round_trip_no_inner_ws():
+    # Brace with no inner whitespace — round-trip must preserve.
+    src = 'ltm pool /Common/foo {\n    description {primary_cluster}\n}\n'
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_braced_description_round_trip_multi_line():
+    src = (
+        "ltm pool /Common/foo {\n"
+        "    description {\n"
+        "        line one of description\n"
+        "        line two with stuff\n"
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "line one of description" not in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_braced_description_with_nested_braces_round_trip():
+    # The body itself contains a nested ``{...}`` — depth tracker must
+    # find the OUTER RBRACE, not the inner one.
+    src = (
+        "ltm pool /Common/foo {\n"
+        "    description { outer { inner } more }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "outer { inner } more" not in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_braced_descriptions_with_different_ws_distinct_placeholders():
+    """Same substantive content with different inner whitespace stores
+    distinct entries (because dedup key includes the full span). This is
+    needed for byte-exact round-trip of each reference site."""
+    src = (
+        'ltm pool /Common/a {\n'
+        '    description { primary }\n'
+        '}\n'
+        'ltm pool /Common/b {\n'
+        '    description {primary}\n'
+        '}\n'
+    )
+    ledger, diag = scan(src)
+    desc_entries = [e for e in ledger.entries.values() if e.kind == Kind.DESC]
+    assert len(desc_entries) == 2
+    sanitized, _ = substitute(src, ledger, diag)
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
 
 
 # ----- dedup behavior ---------------------------------------------------

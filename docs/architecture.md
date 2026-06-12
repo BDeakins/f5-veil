@@ -1,15 +1,16 @@
 # f5-veil Architecture
 
-Status: v0.0.9 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.10 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
 CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
 / node / monitor / rule / partition / profile / data-group / snat /
 snatpool / virtual-address, GTM pool / wideip / server / datacenter /
-region, net vlan / route-domain / self / trunk, **APM policy / profile,
-security firewall policy / rule-list / address-list / port-list**;
-bare IPv4/IPv6 literals; QSTRING and bareword descriptions. Braced
-descriptions, gtm topology, net interface, security dos, apm
-aaa/sso/acl still pending.
+region, net vlan / route-domain / self / trunk, APM policy / profile,
+security firewall policy / rule-list / address-list / port-list;
+bare IPv4/IPv6 literals; **QSTRING, bareword AND braced descriptions**.
+gtm topology, net interface, security dos, apm aaa/sso/acl, full ASM
+coverage still pending. Tcl-lexer iRule body redaction is the largest
+single remaining feature.
 
 ## Goal
 
@@ -126,7 +127,7 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `IRULE` | `IRULE_0001` | `/Common/my_redirect_rule` |
 | `PARTITION` | `PARTITION_0001` | `Tenant_A` (note: `Common` is exempt) |
 | `IPADDR` | `203.0.113.42` (rendered docs IP, not `IPADDR_NNNN`) | `10.0.0.42` |
-| `DESC` | `DESC_0001` (emitted inside the original wrapping: `"DESC_0001"` for QSTRING form, bare `DESC_0001` for bareword form) | `"customer prod pool"` |
+| `DESC` | `DESC_0001` — QSTRING and braced forms both emit `"DESC_0001"` (qstring-wrapped); bareword form emits bare `DESC_0001`. Reverse map distinguishes by stored `original` form. | `"customer prod pool"` (qstring) / `{ multi-line body }` (braced) / `single_word` (bareword) |
 | `PROFILE` | `PROFILE_0001` | `/Tenant_A/my_custom_http_profile` (built-in `/Common/<name>` profiles like `/Common/http`, `/Common/clientssl` exempt as universal TMOS signal) |
 | `GTM_POOL` | `GTM_POOL_0001` | `/Common/dns_app_pool` (gtm pool a/aaaa/mx/...) |
 | `GTM_WIDEIP` | `GTM_WIDEIP_0001` | `/Common/www.customer.com` (gtm wideip a/aaaa/...) |
@@ -389,6 +390,10 @@ src/veil/
 - **APM + security firewall** (apm policy / profile, security firewall
   policy / rule-list / address-list / port-list) — landed in v0.0.9.
   `apm aaa/sso/acl` and `security dos` deferred.
+- **Braced descriptions** — landed in v0.0.10. Full `{...}` span stored
+  as the ledger original (including braces and inner whitespace) so
+  reverse restores byte-exactly. Forward emit uses the QSTRING form
+  (`description "DESC_NNNN"`) regardless of input form.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.
