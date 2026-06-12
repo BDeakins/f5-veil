@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "f5-veil"
+version = "0.0.1"
+description = "F5 BIG-IP config obfuscator/de-obfuscator — sanitize customer configs for safe AI analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT-Modified — see LICENSE" }
+authors = [
+    { name = "Blake Deakins" },
+]
+keywords = [
+    "f5",
+    "bigip",
+    "irules",
+    "tmos",
+    "security",
+    "obfuscation",
+    "redaction",
+    "ai-safety",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+veil = "veil.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/BDeakins/f5-veil"
+Issues = "https://github.com/BDeakins/f5-veil/issues"
+Source = "https://github.com/BDeakins/f5-veil"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/veil"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

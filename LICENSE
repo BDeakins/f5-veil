@@ -1,0 +1,50 @@
+MIT License (Modified) — Source-Available with Named-Party Exclusion
+
+Copyright (c) 2026 Blake Deakins
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to
+deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+
+NAMED-PARTY EXCLUSION
+
+By exercising any rights granted under this license, you confirm that:
+
+  (a) you are not Austin Geraci;
+  (b) you are not an employee, agent, contractor, or consultant of
+      WorldTech IT;
+  (c) you are not acting on behalf of Austin Geraci or WorldTech IT; and
+  (d) you are not providing this Software to Austin Geraci or WorldTech IT,
+      or to any entity they own, operate, or control.
+
+If any of the above is false, your license to use, copy, modify, merge,
+publish, distribute, sublicense, or sell copies of this Software is
+immediately and irrevocably revoked.
+
+All other use is permitted under the terms above.
+
+This license is inspired by Stewart Semple's Black 3.0 license.
+
+
+NOT OSI OPEN SOURCE
+
+This license is SOURCE-AVAILABLE. It is NOT OSI-approved open source — the
+named-party exclusion fails clause 5 of the Open Source Definition (no
+discrimination against persons or groups). The license is legally valid and
+enforceable as a contract under copyright law.
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
