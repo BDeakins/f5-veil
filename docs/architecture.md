@@ -470,6 +470,73 @@ src/veil/
   only: UNK paths can still leak via substring inside longer
   non-header barewords. Safety-critical kinds
   (POOL/VS/NODE/MON/IRULE) remain strictly enforced.
+- **`bigip_base.conf` multi-file two-pass** (v1.2).
+- **UCS archive ingestion** (v1.2 — bundled with multi-file since
+  both expand the input-source model).
+- **Personal-use Docker + FastAPI web wrapper** (v1.3). See threat
+  model below for why this is distinct from a hardened service.
 - **Persistent cross-run identifier map** (v2.0).
-- **`bigip_base.conf` multi-file two-pass** (v1.1).
-- **UCS archive ingestion** (v1.2).
+- **Hardened multi-user web service** (v2.1 / v3.0). Shares design
+  surface with v2.0.
+
+## Web wrapper threat model (v1.3 and v2.1+)
+
+The CLI's threat model is "engineer's own machine, customer data
+never crosses the network in cleartext, encrypted answer file is the
+only artifact that leaves." A network service in front of the
+obfuscator fundamentally inverts this — customer configs cross the
+wire, sit in server memory or disk briefly, and the passphrase has
+to be communicated to the server somehow. Two distinct deployment
+shapes:
+
+### v1.3 — personal-use only
+
+Hard rules — break ANY of these and you're in v2.1 territory:
+
+- **Single-user, single-tenant.** Operator is the only consumer.
+- **Private network only.** Bound to a non-internet-reachable
+  interface (e.g. 10.0.0.x homelab subnet). No port-forward, no
+  reverse proxy to the public internet, no Tailscale exit node, no
+  Cloudflare Tunnel. The Dockerfile and compose file MUST default to
+  binding `127.0.0.1` or a private bridge — never `0.0.0.0` on a
+  public NIC.
+- **No auth, by design.** Auth implies multi-user; multi-user implies
+  v2.1 hardening. Don't bolt auth onto the v1.3 image — it gives a
+  false sense of security.
+- **RAM-only processing.** Configs are read into memory, processed,
+  and the response is streamed back. No disk persistence of input,
+  intermediate, or output state. The encrypted answer file is built
+  in memory and returned with the sanitized output in the same
+  response.
+- **No logging of payload content.** Logs may contain HTTP status,
+  byte counts, durations — never sanitized text, never originals,
+  never anything resembling config content. Surface the leak detector
+  summary as a structured count, never a list with snippets.
+- **Threat model is "anyone with network access to the homelab".**
+  That's the operator + family + anyone with the homelab VPN. If that
+  set is acceptable for the operator's own customer data, v1.3 is
+  fine. If teammates or other engineers might want access — v2.1.
+
+### v2.1 / v3.0 — hardened multi-user service
+
+The piece that turns this from "engineer's-own toy" into a real
+product. Adds (non-exhaustive):
+
+- mTLS or OAuth (SSO via existing identity provider).
+- HTTPS only, HSTS, modern TLS profile.
+- Per-user audit log of WHEN configs were processed (not WHAT —
+  never log payload content) and WHO downloaded the answer file.
+- Hard ephemerality: server process should ideally not have
+  filesystem write access to anywhere outside `/tmp` mounted as
+  tmpfs; process exit MUST clear memory.
+- Rate limiting + payload size caps.
+- A documented secret-storage model for the encryption keys (if the
+  server retains any cross-session state, which v2.0 will require).
+- Threat model write-up that names specific adversaries: malicious
+  authenticated user, network MITM, server compromise, side-channel,
+  prompt-injection-via-config-content if the AI uses sanitized output
+  as input to anything that re-renders.
+
+The two deployment shapes share NO code beyond the underlying veil
+library API. The v1.3 image MUST NOT be the foundation for v2.1 —
+write v2.1 from scratch.

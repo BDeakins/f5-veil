@@ -168,12 +168,23 @@ tripped under `--strict`.
 
 ## Roadmap
 
-- **v1.0** — `bigip.conf` only. The scope above.
-- **v1.1** — `bigip_base.conf` multi-file two-pass discovery; selected
-  v1.1+ kinds from the list above.
-- **v1.2** — UCS archive ingestion (tar.gz extract and recurse).
-- **v2.0** — Persistent cross-run identifier map (same source identifier
-  → same placeholder across runs, for ongoing engagements).
+- **v1.0** — `bigip.conf` only. Shipped.
+- **v1.1** — BAREWORD infix substring substitution (catches URLs,
+  IP ranges, compound barewords). Shipped.
+- **v1.2** — `bigip_base.conf` multi-file two-pass discovery, UCS
+  archive ingestion (both expand the input-source model), plus the
+  accumulated less-common kinds and `auth remote-role` / bot-defense
+  scanner gaps.
+- **v1.3** — Personal-use Docker image + thin FastAPI wrapper around
+  the CLI (paste config in browser, get sanitized output and encrypted
+  answer file out). RAM-only processing, no auth, **not for internet
+  exposure**. CLI remains the canonical distribution. See the threat
+  model in [docs/architecture.md](docs/architecture.md).
+- **v2.0** — Persistent cross-run identifier map (same source
+  identifier → same placeholder across runs, for ongoing engagements).
+- **v2.1 / v3.0** — Hardened multi-user web service (auth, HTTPS,
+  audit logging, hard ephemerality guarantees, rate limiting). Shares
+  design surface with the v2.0 persistent map (auth + secret storage).
 
 ## License
 
