@@ -160,7 +160,7 @@ _PLACEHOLDER_RE = re.compile(
     r"|VLAN|ROUTE_DOMAIN|SELF_IP|TRUNK"
     r"|APM_POLICY|APM_PROFILE"
     r"|FIREWALL_POLICY|FIREWALL_RULE_LIST|FIREWALL_ADDRESS_LIST|FIREWALL_PORT_LIST"
-    r"|IRULE_COMMENT|AD_GROUP_DN)"
+    r"|IRULE_COMMENT|AD_GROUP_DN|FQDN)"
     r"_\d{4,}$"
 )
 
@@ -202,7 +202,14 @@ _BAREWORD_CANDIDATE_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_-]{2,62}\b")
 _PATH_RE = re.compile(r"/[A-Za-z0-9_][A-Za-z0-9_./:%~-]*")
 
 # Safe partition prefixes for paths.
-_SAFE_PARTITION_RE = re.compile(r"^/(?:Common|PARTITION_\d{4,})(?:/|$)")
+# - ``/Common/...`` — universal BIG-IP signal.
+# - ``/PARTITION_NNNN/...`` — customer partition substituted by pass-2.
+# - ``/FQDN_NNNN/...`` — customer FQDN substituted by pass-2.0 (v1.2);
+#   sub-segments are still scanned for identifier shape.
+# - ``/UNK_NNNN/...`` — unknown-kind path placeholder.
+_SAFE_PARTITION_RE = re.compile(
+    r"^/(?:Common|PARTITION_\d{4,}|FQDN_\d{4,}|UNK_\d{4,})(?:/|$)"
+)
 
 # Built-in profile leaf names that survive substitution as universal
 # TMOS signal. Mirror of `scanner._BUILTIN_PROFILES`; intentionally

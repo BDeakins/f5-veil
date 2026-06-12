@@ -100,6 +100,16 @@ class Kind(str, Enum):
     # via the tokenizer; the reverse pass restores the original byte-exact
     # via the comment reverse map. Top-level comments (e.g.
     # ``#TMSH-VERSION:``) are never interned and pass through verbatim.
+    FQDN = "FQDN"  # Internal / private FQDNs discovered inside any
+    # WORD or QSTRING token by pass-2.0 (regex match against a fixed set
+    # of internal suffixes: ``.local``, ``.corp``, ``.lan``,
+    # ``.internal``, ``.intranet``, ``.home.arpa``, ``.private``).
+    # ``original`` stores the bare FQDN text (no surrounding URL syntax,
+    # no QSTRING quotes). Pass-2's substring substitution machinery (the
+    # same v0.0.14 QSTRING + v1.1 BAREWORD walker) substitutes each
+    # match in place. Bare-placeholder render (``FQDN_NNNN``). Public-
+    # internet FQDNs (``vendor.example.com``) are NOT discovered —
+    # only internal suffixes that reveal customer namespace.
     AD_GROUP_DN = "AD_GROUP_DN"  # LDAP / AD distinguished names discovered
     # inside any QSTRING by pass-1.9 (regex match for the
     # ``CN=...,DC=...,DC=...`` shape with arbitrary leading/intermediate

@@ -83,6 +83,19 @@ from .tokenizer import Token, TokKind, tokenize
 _WORD_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 )
+# v1.2 — right-side boundary set for FQDN substring substitution. The
+# F5 file storage layer auto-generates compound filenames of the form
+# ``<fqdn>_<index>_<index>`` (e.g.
+# ``:Common:host01.example.local_69313_3``) where the customer FQDN
+# is followed by an underscore-separated numeric index. Treating ``_``
+# as a non-word RIGHT boundary lets the FQDN substitute even in this
+# shape; the leading ``_<index>`` is universal F5 bookkeeping, not
+# customer content. Left boundary stays strict — relaxing left could
+# let a shorter FQDN partially substitute inside a longer
+# customer-defined compound (rare but possible).
+_WORD_CHARS_FQDN_RIGHT = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
 
 
 def substitute(
@@ -718,7 +731,7 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
 def _build_substring_render_map(
     ledger: Ledger,
     kind_filter: set[Kind] | None = None,
-) -> dict[str, list[tuple[str, str, str]]]:
+) -> dict[str, list[tuple[str, str, str, frozenset[str]]]]:
     """First-char-bucketed substring lookup table for QSTRING contents.
 
     For each ledger entry, computes the rendered placeholder text exactly
@@ -737,9 +750,15 @@ def _build_substring_render_map(
     ``{Kind.AD_GROUP_DN}`` to build the globally-applied AD DN map,
     while leaving ``kind_filter=None`` to build the full iRule-body map.
 
-    Returns: ``{first_char: [(original, rendered, placeholder), ...]}``.
+    Returns: ``{first_char: [(original, rendered, placeholder, right_word_chars), ...]}``.
+
+    ``right_word_chars`` is the per-entry character set used for the
+    RIGHT-side word-boundary check at substitution time. Most entries
+    use the strict ``_WORD_CHARS``; ``Kind.FQDN`` uses
+    ``_WORD_CHARS_FQDN_RIGHT`` (drops ``_``) to handle the F5 file-
+    storage compound-filename shape ``<fqdn>_<index>``.
     """
-    by_first_char: dict[str, list[tuple[str, str, str]]] = {}
+    by_first_char: dict[str, list[tuple[str, str, str, frozenset[str]]]] = {}
     for entry in ledger.entries.values():
         if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
             continue
@@ -751,26 +770,36 @@ def _build_substring_render_map(
         if rendered is None:
             continue
         first = entry.original[0]
+        right_wc = _right_word_chars_for_kind(entry.kind)
         by_first_char.setdefault(first, []).append(
-            (entry.original, rendered, entry.placeholder)
+            (entry.original, rendered, entry.placeholder, right_wc)
         )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
 
 
+def _right_word_chars_for_kind(kind: Kind) -> frozenset[str]:
+    """Per-kind right-boundary char set. Default is strict
+    ``_WORD_CHARS``; FQDN relaxes (drops ``_``) so the F5
+    compound-filename shape ``<fqdn>_<index>`` substitutes cleanly."""
+    if kind == Kind.FQDN:
+        return _WORD_CHARS_FQDN_RIGHT
+    return _WORD_CHARS
+
+
 def _build_substring_reverse_render_map(
     ledger: Ledger,
     kind_filter: set[Kind] | None = None,
-) -> dict[str, list[tuple[str, str]]]:
+) -> dict[str, list[tuple[str, str, frozenset[str]]]]:
     """Reverse counterpart of :func:`_build_substring_render_map`. Same
     eligibility rules and ``kind_filter`` semantics; indexed by the
     rendered placeholder's first character; each bucket sorted by
     ``len(rendered)`` descending.
 
-    Returns: ``{first_char: [(rendered, original), ...]}``.
+    Returns: ``{first_char: [(rendered, original, right_word_chars), ...]}``.
     """
-    by_first_char: dict[str, list[tuple[str, str]]] = {}
+    by_first_char: dict[str, list[tuple[str, str, frozenset[str]]]] = {}
     for entry in ledger.entries.values():
         if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
             continue
@@ -782,7 +811,10 @@ def _build_substring_reverse_render_map(
         if rendered is None:
             continue
         first = rendered[0]
-        by_first_char.setdefault(first, []).append((rendered, entry.original))
+        right_wc = _right_word_chars_for_kind(entry.kind)
+        by_first_char.setdefault(first, []).append(
+            (rendered, entry.original, right_wc)
+        )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
@@ -835,7 +867,7 @@ def _substitute_in_irule_qstring(
         ch = s[i]
         candidates = by_first_char.get(ch, ())
         matched = False
-        for original, rendered, placeholder in candidates:
+        for original, rendered, placeholder, right_word_chars in candidates:
             olen = len(original)
             if i + olen > n:
                 continue
@@ -843,7 +875,9 @@ def _substitute_in_irule_qstring(
                 continue
             left_ok = (i == 0) or (s[i - 1] not in _WORD_CHARS)
             right_pos = i + olen
-            right_ok = (right_pos == n) or (s[right_pos] not in _WORD_CHARS)
+            right_ok = (
+                right_pos == n or s[right_pos] not in right_word_chars
+            )
             if not (left_ok and right_ok):
                 continue
             parts.append(rendered)
@@ -866,11 +900,12 @@ def _substitute_in_irule_qstring(
 
 def _reverse_substitute_in_irule_qstring(
     tok: Token,
-    by_first_char: dict[str, list[tuple[str, str]]],
+    by_first_char: dict[str, list[tuple[str, str, frozenset[str]]]],
 ) -> str:
     """Reverse of :func:`_substitute_in_irule_qstring`: walk the
     sanitized QSTRING and replace each rendered-placeholder substring
-    with the original ledger value. Same word-boundary protection."""
+    with the original ledger value. Same per-entry right-boundary
+    protection (FQDN relaxed; others strict)."""
     s = tok.value
     n = len(s)
     parts: list[str] = []
@@ -879,7 +914,7 @@ def _reverse_substitute_in_irule_qstring(
         ch = s[i]
         candidates = by_first_char.get(ch, ())
         matched = False
-        for rendered, original in candidates:
+        for rendered, original, right_word_chars in candidates:
             rlen = len(rendered)
             if i + rlen > n:
                 continue
@@ -887,7 +922,9 @@ def _reverse_substitute_in_irule_qstring(
                 continue
             left_ok = (i == 0) or (s[i - 1] not in _WORD_CHARS)
             right_pos = i + rlen
-            right_ok = (right_pos == n) or (s[right_pos] not in _WORD_CHARS)
+            right_ok = (
+                right_pos == n or s[right_pos] not in right_word_chars
+            )
             if not (left_ok and right_ok):
                 continue
             parts.append(original)
