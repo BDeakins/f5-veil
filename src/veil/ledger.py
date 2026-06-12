@@ -100,6 +100,16 @@ class Kind(str, Enum):
     # via the tokenizer; the reverse pass restores the original byte-exact
     # via the comment reverse map. Top-level comments (e.g.
     # ``#TMSH-VERSION:``) are never interned and pass through verbatim.
+    AD_GROUP_DN = "AD_GROUP_DN"  # LDAP / AD distinguished names discovered
+    # inside any QSTRING by pass-1.9 (regex match for the
+    # ``CN=...,DC=...,DC=...`` shape with arbitrary leading/intermediate
+    # RDN components). ``original`` stores the bare DN text (without the
+    # surrounding QSTRING quotes or any ``memberOf=`` / ``memberOF=``
+    # prefix). Pass-2 substring-substitutes AD_GROUP_DN entries inside
+    # every QSTRING globally (not just ``ltm rule`` bodies) because DNs
+    # have no legitimate probe-payload use case and customer AD domain
+    # names are unambiguously identifying. Bare-placeholder render
+    # (``AD_GROUP_DN_NNNN``); reverse map restores byte-exact.
 
 
 _RFC5737_NETWORKS = (

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
+from .ad_dn_discovery import discover_ad_dns
 from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
 from .ip_discovery import discover_ip_literals
@@ -151,6 +152,10 @@ def scan(
     # (v0.0.11). Top-level comments (e.g. ``#TMSH-VERSION:``) are NOT
     # discovered — they are universal BIG-IP signal.
     discover_irule_comments(src, ledger, diagnostics)
+    # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
+    # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
+    # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
+    discover_ad_dns(src, ledger, diagnostics)
     return ledger, diagnostics
 
 

@@ -1,19 +1,22 @@
 # f5-veil Architecture
 
-Status: v0.0.12 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
-pass-1.8 (iRule `#` comment) + pass-2 substitution (Tcl-string-aware
-inside `ltm rule` bodies) + AES-256-GCM answer file +
-obfuscate/deobfuscate CLI + leak detector with `--strict`. Object scope:
-LTM pool / virtual / node / monitor / rule / partition / profile /
-data-group / snat / snatpool / virtual-address, GTM pool / wideip /
-server / datacenter / region, net vlan / route-domain / self / trunk,
-APM policy / profile, security firewall policy / rule-list /
-address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
-AND braced descriptions**; **Tcl `#` comments AND Tcl `"..."` string
-substring substitution inside `ltm rule` bodies**. gtm topology, net
+Status: v0.0.13 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+pass-1.8 (iRule `#` comment) + pass-1.9 (AD / LDAP distinguished name) +
+pass-2 substitution (Tcl-string-aware inside `ltm rule` bodies +
+globally-applied AD DN substring substitution in every QSTRING) +
+AES-256-GCM answer file + obfuscate/deobfuscate CLI + leak detector
+with `--strict`. Object scope: LTM pool / virtual / node / monitor /
+rule / partition / profile / data-group / snat / snatpool /
+virtual-address, GTM pool / wideip / server / datacenter / region, net
+vlan / route-domain / self / trunk, APM policy / profile, security
+firewall policy / rule-list / address-list / port-list; bare IPv4/IPv6
+literals; **QSTRING, bareword AND braced descriptions**; **Tcl `#`
+comments AND Tcl `"..."` string substring substitution inside `ltm
+rule` bodies**; **AD / LDAP distinguished names
+(`CN=...,DC=...,DC=...`) inside any QSTRING**. gtm topology, net
 interface, security dos, apm aaa/sso/acl, full ASM coverage, and
-`auth remote-role` / AD-group-DN obfuscation still pending — v0.0.13+
-scope.
+`auth remote-role role-info` header paths (the customer-defined role
+bucket names) still pending — v0.0.14+ scope.
 
 ## Goal
 
@@ -430,13 +433,27 @@ src/veil/
   `qstring_contains_identifier` diagnostic. Tcl `#` comments inside
   rule bodies are redacted via v0.0.11's `Kind.IRULE_COMMENT` path
   (see above).
-- **`auth remote-role` / AD-group-DN obfuscation** — deferred to
-  v0.0.13. `auth remote-role role-info` blocks store AD group DNs
-  (`CN=BIG-IP_Admins,OU=Groups,DC=corp,DC=example,DC=com`) verbatim
-  in the `attribute` field; partition root references and APM
-  `aaa active-directory` may carry similar values. Needs a dedicated
-  kind (e.g. `Kind.AD_GROUP_DN`) and either pass-1.9 discovery + pass-2
-  emit symmetry with DESC handling.
+- **AD / LDAP distinguished-name obfuscation** — landed in v0.0.13
+  via pass-1.9 (`ad_dn_discovery`) + `Kind.AD_GROUP_DN`. Regex scans
+  every QSTRING for the RFC 4514 DN shape (one CN= leading RDN, at
+  least one DC= component) and interns each unique match. Pass-2
+  substring-substitutes AD_GROUP_DN entries inside every QSTRING
+  globally (both inside `ltm rule` bodies — via the same combined map
+  v0.0.12 already uses — and outside, where prior to v0.0.13 only the
+  `qstring_contains_identifier` diagnostic fired). Word-boundary
+  protection applies on both sides. Descriptions skip pass-1.9 (already
+  redacted by DESC) to avoid orphan AD_GROUP_DN entries. Real-world
+  coverage validated against EXAMPLE_CORPUS: 10 distinct DNs interned, 0
+  surviving DN substrings in sanitized output, byte-exact round-trip.
+- **`auth remote-role role-info` header paths** — deferred to v0.0.14.
+  The role bucket names (`/Common/F5_Admins`,
+  `/Common/Domain_Admins`, etc.) are customer-defined identifiers that
+  currently fall under the `Kind.UNKNOWN` best-effort path (because
+  `auth remote-role` lands in `_record_unknown_top_level`). Real
+  configs leak the bucket leaf via path-shape inside the `auth
+  remote-role role-info` body. Needs either a new top-level kind
+  (`Kind.REMOTE_ROLE`) or a body-walker that registers each role-info
+  child path.
 - **Profile, SNAT, data-group, ASM, GTM, VLAN, cert, route-domain
   kinds.** Each unknown top-level block surfaces as
   `unknown_top_level` diagnostic; pass-2 callers fail closed.

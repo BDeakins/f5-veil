@@ -110,7 +110,14 @@ def substitute(
     if diagnostics is None:
         diagnostics = Diagnostics()
     tokens = list(tokenize(src))
+    # v0.0.12 — full substring map for QSTRINGs INSIDE iRule bodies.
     irule_render_map = _build_substring_render_map(ledger)
+    # v0.0.13 — AD-DN-only substring map for QSTRINGs OUTSIDE iRule
+    # bodies. AD DNs are distinctive and never legitimate probe-payload
+    # content, so they get globally substituted.
+    ad_dn_render_map = _build_substring_render_map(
+        ledger, kind_filter={Kind.AD_GROUP_DN},
+    )
     out: list[str] = []
     cursor = 0
     depth = 0
@@ -160,11 +167,20 @@ def substitute(
             cursor = last.offset + last.length
             i += consumed
             continue
-        # ---- iRule-body QSTRING: substring substitution ----
+        # ---- iRule-body QSTRING: full substring substitution ----
         if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
             out.append(
                 _substitute_in_irule_qstring(tok, irule_render_map, ledger)
             )
+            cursor = tok.offset + tok.length
+            i += 1
+            continue
+        # ---- Non-iRule QSTRING: AD DN substring sub + diagnostic ----
+        if tok.kind == TokKind.QSTRING:
+            out.append(
+                _substitute_in_irule_qstring(tok, ad_dn_render_map, ledger)
+            )
+            _check_qstring_for_identifier(tok, ledger, diagnostics)
             cursor = tok.offset + tok.length
             i += 1
             continue
@@ -298,6 +314,11 @@ def _check_qstring_for_identifier(
     if not content:
         return
     for (kind, original), placeholder in ledger.by_original.items():
+        # AD_GROUP_DN entries are always substring-substituted globally
+        # in pass-2 (v0.0.13) — they never trigger the "not handled"
+        # diagnostic, regardless of which QSTRING context they appear in.
+        if kind == Kind.AD_GROUP_DN:
+            continue
         if original in content:
             diagnostics.qstring_contains_identifier.append(
                 (placeholder, tok.offset, tok.line)
@@ -466,6 +487,9 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     qstring_reverse_map = _build_qstring_reverse_map(ledger)
     comment_reverse_map = _build_comment_reverse_map(ledger)
     irule_reverse_map = _build_substring_reverse_render_map(ledger)
+    ad_dn_reverse_map = _build_substring_reverse_render_map(
+        ledger, kind_filter={Kind.AD_GROUP_DN},
+    )
     tokens = list(tokenize(sanitized))
     out: list[str] = []
     cursor = 0
@@ -506,11 +530,24 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
             cursor = last.offset + last.length
             i += 4
             continue
-        # ---- iRule-body QSTRING: substring reverse substitution ----
+        # ---- iRule-body QSTRING: full substring reverse substitution ----
         if rule_entry_depth is not None and tok.kind == TokKind.QSTRING:
             out.append(
                 _reverse_substitute_in_irule_qstring(tok, irule_reverse_map)
             )
+            cursor = tok.offset + tok.length
+            i += 1
+            continue
+        # ---- Non-iRule QSTRING: DESC reverse first, else AD DN reverse ----
+        if tok.kind == TokKind.QSTRING:
+            if tok.value in qstring_reverse_map:
+                out.append(qstring_reverse_map[tok.value])
+            else:
+                out.append(
+                    _reverse_substitute_in_irule_qstring(
+                        tok, ad_dn_reverse_map,
+                    )
+                )
             cursor = tok.offset + tok.length
             i += 1
             continue
@@ -675,27 +712,33 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
 
 def _build_substring_render_map(
     ledger: Ledger,
+    kind_filter: set[Kind] | None = None,
 ) -> dict[str, list[tuple[str, str, str]]]:
-    """First-char-bucketed substring lookup table for QSTRINGs inside
-    ``ltm rule`` bodies.
+    """First-char-bucketed substring lookup table for QSTRING contents.
 
-    For each non-DESC, non-IRULE_COMMENT ledger entry, computes the
-    rendered placeholder text exactly as pass-2 would emit a standalone
-    WORD reference (path-bearing kinds get ``/Common/POOL_NNNN`` or
-    ``/PARTITION_NNNN/POOL_NNNN`` shape; bare-placeholder kinds emit
-    plain ``PARTITION_NNNN``). Entries are indexed by their original's
-    first character; each bucket is sorted by ``len(original)``
-    descending so callers can scan longest-match-first.
+    For each ledger entry, computes the rendered placeholder text exactly
+    as pass-2 would emit a standalone WORD reference (path-bearing kinds
+    get ``/Common/POOL_NNNN`` or ``/PARTITION_NNNN/POOL_NNNN`` shape;
+    bare-placeholder kinds emit plain ``PARTITION_NNNN``). Entries are
+    indexed by their original's first character; each bucket is sorted
+    by ``len(original)`` descending so callers can scan
+    longest-match-first.
 
-    Skipped: DESC (description bodies don't appear inside Tcl strings as
-    meaningful content) and IRULE_COMMENT (the placeholder is a COMMENT
-    token, not a substring target).
+    Skipped unconditionally: DESC (description bodies don't appear
+    inside Tcl strings as meaningful content) and IRULE_COMMENT (the
+    placeholder is a COMMENT token, not a substring target).
+
+    ``kind_filter`` narrows to a specific set of kinds. v0.0.13 uses
+    ``{Kind.AD_GROUP_DN}`` to build the globally-applied AD DN map,
+    while leaving ``kind_filter=None`` to build the full iRule-body map.
 
     Returns: ``{first_char: [(original, rendered, placeholder), ...]}``.
     """
     by_first_char: dict[str, list[tuple[str, str, str]]] = {}
     for entry in ledger.entries.values():
         if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
+            continue
+        if kind_filter is not None and entry.kind not in kind_filter:
             continue
         if not entry.original:
             continue
@@ -713,16 +756,20 @@ def _build_substring_render_map(
 
 def _build_substring_reverse_render_map(
     ledger: Ledger,
+    kind_filter: set[Kind] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Reverse counterpart of :func:`_build_substring_render_map`. Same
-    eligibility rules; indexed by the rendered placeholder's first
-    character; each bucket sorted by ``len(rendered)`` descending.
+    eligibility rules and ``kind_filter`` semantics; indexed by the
+    rendered placeholder's first character; each bucket sorted by
+    ``len(rendered)`` descending.
 
     Returns: ``{first_char: [(rendered, original), ...]}``.
     """
     by_first_char: dict[str, list[tuple[str, str]]] = {}
     for entry in ledger.entries.values():
         if entry.kind in (Kind.DESC, Kind.IRULE_COMMENT):
+            continue
+        if kind_filter is not None and entry.kind not in kind_filter:
             continue
         if not entry.original:
             continue
