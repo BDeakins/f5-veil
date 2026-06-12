@@ -42,6 +42,9 @@ _TWO_WORD_KINDS = MappingProxyType({
     "virtual": Kind.VS,
     "node": Kind.NODE,
     "rule": Kind.IRULE,
+    "snat": Kind.SNAT,
+    "snatpool": Kind.SNATPOOL,
+    "virtual-address": Kind.VADDR,
 })
 
 # Top-level TMSH module words. Anything seen at depth 0 that starts with
@@ -232,6 +235,16 @@ def _try_match_object(
         if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
             return 0
         _register(ledger, Kind.MON, path_tok, diagnostics)
+        return 5
+    if second == "data-group":
+        # ltm data-group <internal|external> /path {
+        if i + 4 >= len(tokens):
+            return 0
+        path_tok = tokens[i + 3]
+        lbrace = tokens[i + 4]
+        if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+            return 0
+        _register(ledger, Kind.DG, path_tok, diagnostics)
         return 5
     if second == "profile":
         # ltm profile <subtype> /path {

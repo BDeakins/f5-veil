@@ -1,13 +1,15 @@
 # f5-veil Architecture
 
-Status: v0.0.6 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.7 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
 CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
-/ node / monitor / rule / partition / profile, **GTM pool / wideip /
-server / datacenter**; bare IPv4/IPv6 literals; QSTRING and bareword
-descriptions; built-in TMOS profile names pass through literal as
-universal signal. Braced descriptions, gtm topology/region, and
-ASM/data-group/SNAT coverage still pending.
+/ node / monitor / rule / partition / profile / **data-group / snat /
+snatpool / virtual-address**, GTM pool / wideip / server / datacenter;
+bare IPv4/IPv6 literals; QSTRING and bareword descriptions; built-in
+TMOS profile names pass through literal. Shadowed-duplicate ledger
+entries (e.g. NODE + VADDR sharing same IP path) no longer
+mis-reported as orphans. Braced descriptions, gtm topology/region,
+ASM, net VLAN/route-domain still pending.
 
 ## Goal
 
@@ -130,6 +132,10 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `GTM_WIDEIP` | `GTM_WIDEIP_0001` | `/Common/www.customer.com` (gtm wideip a/aaaa/...) |
 | `GTM_SERVER` | `GTM_SERVER_0001` | `/Common/east_bigip` |
 | `GTM_DC` | `GTM_DC_0001` | `/Common/east_dc` (gtm datacenter) |
+| `DG` | `DG_0001` | `/Common/customer_url_list` (`ltm data-group internal/external`) |
+| `SNAT` | `SNAT_0001` | `/Common/customer_snat` |
+| `SNATPOOL` | `SNATPOOL_0001` | `/Common/customer_snatpool` |
+| `VADDR` | `VADDR_0001` | `/Common/customer_vs_addr` (`ltm virtual-address`; may shadow a NODE entry of the same IP path — see orphan note below) |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -362,7 +368,9 @@ src/veil/
 - **LTM profile kind expansion** with factory built-in exemption —
   landed in v0.0.5.
 - **GTM family kinds** (gtm pool / wideip / server / datacenter) —
-  landed in v0.0.6. `gtm topology` / `gtm region` deferred to v0.0.7.
+  landed in v0.0.6. `gtm topology` / `gtm region` deferred.
+- **LTM extras kinds** (data-group / snat / snatpool / virtual-address)
+  + shadowed-duplicate orphan suppression — landed in v0.0.7.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.

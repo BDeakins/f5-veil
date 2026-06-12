@@ -61,6 +61,16 @@ class Kind(str, Enum):
     # source (BIG-IP, generic-host, etc.).
     GTM_DC = "GTM_DC"  # ``gtm datacenter /path { ... }`` — physical /
     # logical site grouping for GTM topology decisions.
+    DG = "DG"  # ``ltm data-group <internal|external> /path { ... }`` —
+    # named key/value list. Records inside the body often hold
+    # customer-identifying values; v0.0.7 substitutes the header path
+    # only (record values are body content, future work).
+    SNAT = "SNAT"  # ``ltm snat /path { ... }`` — source NAT object.
+    SNATPOOL = "SNATPOOL"  # ``ltm snatpool /path { ... }`` — SNAT IP
+    # address pool.
+    VADDR = "VADDR"  # ``ltm virtual-address /path { ... }`` — explicit
+    # virtual-address object (auto-created by virtual definitions, but
+    # configs may override settings via explicit blocks).
 
 
 _RFC5737_NETWORKS = (

@@ -309,9 +309,24 @@ def _emit_description(
 
 
 def _check_orphan_entries(ledger: Ledger, diagnostics: Diagnostics) -> None:
+    """Surface entries that received zero references — the parser gap
+    signal — but suppress shadowed duplicates.
+
+    Real configs can register the same path under multiple kinds (e.g.
+    ``/Common/<ip>`` as both NODE and VADDR for the same address).
+    Pass-2's Kind-iteration order picks one, leaving the other unused.
+    That's not a parser gap — the path WAS substituted, just via the
+    other entry — so we don't flag it as an orphan."""
+    referenced_originals: set[str] = set()
+    for entry in ledger.entries.values():
+        if entry.references:
+            referenced_originals.add(entry.original)
     for placeholder, entry in ledger.entries.items():
-        if not entry.references:
-            diagnostics.orphan_entries.append(placeholder)
+        if entry.references:
+            continue
+        if entry.original in referenced_originals:
+            continue
+        diagnostics.orphan_entries.append(placeholder)
 
 
 # ---------------------------------------------------------------------
