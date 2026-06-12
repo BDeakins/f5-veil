@@ -154,7 +154,7 @@ _MAC_CISCO_RE = re.compile(
 # ----- Placeholder / bareword / path -------------------------------------
 
 _PLACEHOLDER_RE = re.compile(
-    r"^(?:POOL|VS|NODE|MON|IRULE|PARTITION|UNK)_\d{4,}$"
+    r"^(?:POOL|VS|NODE|MON|IRULE|PARTITION|UNK|DESC|PROFILE)_\d{4,}$"
 )
 
 # TMSH bareword tokens that may appear unquoted in the body of any object.
@@ -196,6 +196,33 @@ _PATH_RE = re.compile(r"/[A-Za-z0-9_][A-Za-z0-9_./:%~-]*")
 
 # Safe partition prefixes for paths.
 _SAFE_PARTITION_RE = re.compile(r"^/(?:Common|PARTITION_\d{4,})(?:/|$)")
+
+# Built-in profile leaf names that survive substitution as universal
+# TMOS signal. Mirror of `scanner._BUILTIN_PROFILES`; intentionally
+# duplicated to keep leak_detector standalone (no scanner imports here).
+_BUILTIN_PROFILE_LEAVES = frozenset({
+    "http", "http2", "http-explicit", "http-transparent",
+    "tcp", "tcp-lan-optimized", "tcp-wan-optimized",
+    "tcp-mobile-optimized", "tcp-legacy",
+    "f5-tcp-lan", "f5-tcp-wan", "f5-tcp-mobile", "f5-tcp-progressive",
+    "udp", "udp_decrement_ttl", "udp_gtm_dns",
+    "fastL4", "fasthttp",
+    "clientssl", "clientssl-insecure-compatible",
+    "clientssl-secure", "wom-default-clientssl",
+    "serverssl", "serverssl-insecure-compatible",
+    "apm-default-clientssl", "splitsession-default-clientssl",
+    "crypto-server-default-clientssl",
+    "crypto-client-default-serverssl",
+    "oneconnect",
+    "ftp", "dns", "sip", "rtsp", "stream", "ipother",
+    "smtp", "smtps", "imap", "pop3", "ldap", "radius",
+    "diameter", "mqtt", "websocket",
+    "web-acceleration", "web-security", "wa-cache",
+    "analytics", "request-log", "response-adapt",
+    "request-adapt", "icap",
+    "cookie", "source_addr", "dest_addr", "hash", "ssl",
+    "universal", "msrdp", "sip_info",
+})
 
 
 # ----- Public API --------------------------------------------------------
@@ -383,6 +410,8 @@ def _scan_paths(
                 continue
             if seg_core in _TMSH_KEYWORDS:
                 continue
+            if seg_core in _BUILTIN_PROFILE_LEAVES:
+                continue
             # Plain TMSH attribute words (no digit/_/-) — skip.
             if not any(c.isdigit() or c in "_-" for c in seg_core):
                 continue
@@ -422,6 +451,8 @@ def _is_identifier_shaped(word: str) -> bool:
     if word in _TMSH_KEYWORDS:
         return False
     if word.lower() in _TMSH_KEYWORDS:
+        return False
+    if word in _BUILTIN_PROFILE_LEAVES:
         return False
     has_digit = any(c.isdigit() for c in word)
     has_under = "_" in word

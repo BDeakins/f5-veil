@@ -1,11 +1,12 @@
 # f5-veil Architecture
 
-Status: v0.0.4 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.5 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
-CLI + leak detector with `--strict`. Tracer-bullet object scope (pool,
-virtual, node, monitor, rule, partition), bare IPv4/IPv6 literals,
-QSTRING and bareword descriptions. Braced descriptions and full
-GTM/profile/ASM coverage still pending.
+CLI + leak detector with `--strict`. Object scope: pool, virtual,
+node, monitor, rule, partition, **LTM profile**; bare IPv4/IPv6
+literals; QSTRING and bareword descriptions; built-in TMOS profile
+names pass through literal as universal signal. Braced descriptions
+and full GTM/ASM/data-group coverage still pending.
 
 ## Goal
 
@@ -123,6 +124,7 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `PARTITION` | `PARTITION_0001` | `Tenant_A` (note: `Common` is exempt) |
 | `IPADDR` | `203.0.113.42` (rendered docs IP, not `IPADDR_NNNN`) | `10.0.0.42` |
 | `DESC` | `DESC_0001` (emitted inside the original wrapping: `"DESC_0001"` for QSTRING form, bare `DESC_0001` for bareword form) | `"customer prod pool"` |
+| `PROFILE` | `PROFILE_0001` | `/Tenant_A/my_custom_http_profile` (built-in `/Common/<name>` profiles like `/Common/http`, `/Common/clientssl` exempt as universal TMOS signal) |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -352,6 +354,8 @@ src/veil/
 - **Leak detector + `--strict`** — landed in v0.0.2.
 - **Bare IP literal substitution in body context** — landed in v0.0.3.
 - **QSTRING + bareword description redaction** — landed in v0.0.4.
+- **LTM profile kind expansion** with factory built-in exemption —
+  landed in v0.0.5.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.

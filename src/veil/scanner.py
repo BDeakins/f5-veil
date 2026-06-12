@@ -34,7 +34,7 @@ from types import MappingProxyType
 from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
 from .ip_discovery import discover_ip_literals
-from .ledger import Kind, Ledger, Ref
+from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .tokenizer import Token, TokKind, tokenize
 
 _TWO_WORD_KINDS = MappingProxyType({
@@ -51,6 +51,43 @@ _TWO_WORD_KINDS = MappingProxyType({
 # through unrecognised blocks.
 _KNOWN_MODULES = frozenset({"ltm", "gtm", "net", "sys", "auth", "apm",
                             "asm", "pem", "security", "wom", "ilx", "cli"})
+
+# BIG-IP factory built-in profile leaf names. These are universal TMOS
+# signal — every config references ``/Common/http``, ``/Common/tcp``,
+# etc. Substituting them would defeat AI reasoning ("which built-in
+# profile is this virtual using?") without obfuscating customer data.
+# v15.1+ factory set plus the common per-version variants. TEMPER /
+# CRUCIBLE may extend on real-config feedback.
+_BUILTIN_PROFILES = frozenset({
+    # Layer 4 / 7 protocol
+    "http", "http2", "http-explicit", "http-transparent",
+    "tcp", "tcp-lan-optimized", "tcp-wan-optimized",
+    "tcp-mobile-optimized", "tcp-legacy", "f5-tcp-lan",
+    "f5-tcp-wan", "f5-tcp-mobile", "f5-tcp-progressive",
+    "udp", "udp_decrement_ttl", "udp_gtm_dns",
+    "fastL4", "fasthttp",
+    # SSL
+    "clientssl", "clientssl-insecure-compatible",
+    "clientssl-secure", "wom-default-clientssl",
+    "serverssl", "serverssl-insecure-compatible",
+    "apm-default-clientssl", "splitsession-default-clientssl",
+    "crypto-server-default-clientssl",
+    "crypto-client-default-serverssl",
+    # OneConnect / SNAT
+    "oneconnect",
+    # Application protocols
+    "ftp", "dns", "sip", "rtsp", "stream", "ipother",
+    "smtp", "smtps", "imap", "pop3", "ldap", "radius",
+    "diameter", "mqtt", "websocket",
+    # Acceleration / security
+    "web-acceleration", "web-security", "wa-cache",
+    "analytics", "request-log", "response-adapt",
+    "request-adapt", "icap",
+    # Persistence (shows up as ltm persistence <subtype> but profile
+    # field appears for some forms — include defensively)
+    "cookie", "source_addr", "dest_addr", "hash", "ssl",
+    "universal", "msrdp", "sip_info",
+})
 
 
 def scan(
@@ -194,6 +231,22 @@ def _try_match_object(
             return 0
         _register(ledger, Kind.MON, path_tok, diagnostics)
         return 5
+    if second == "profile":
+        # ltm profile <subtype> /path {
+        if i + 4 >= len(tokens):
+            return 0
+        path_tok = tokens[i + 3]
+        lbrace = tokens[i + 4]
+        if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+            return 0
+        # Built-in profiles (``/Common/http``, ``/Common/tcp``, etc.)
+        # are universal TMOS signal — pass through literal. Consume the
+        # header (so the body is skipped via brace depth) but don't
+        # intern.
+        if _is_builtin_profile_path(path_tok.value):
+            return 5
+        _register(ledger, Kind.PROFILE, path_tok, diagnostics)
+        return 5
     kind = _TWO_WORD_KINDS.get(second)
     if kind is None:
         return 0
@@ -204,6 +257,18 @@ def _try_match_object(
         return 0
     _register(ledger, kind, path_tok, diagnostics)
     return 4
+
+
+def _is_builtin_profile_path(path: str) -> bool:
+    """True if ``path`` is the well-known leaf of a BIG-IP factory
+    built-in profile (e.g. ``/Common/http``, ``/Common/clientssl``)."""
+    parsed = _split_partition_path(path)
+    if parsed is None:
+        return False
+    partition, leaf = parsed
+    if partition != COMMON_PARTITION:
+        return False
+    return leaf in _BUILTIN_PROFILES
 
 
 def _split_partition_path(path: str) -> tuple[str, str] | None:

@@ -46,6 +46,12 @@ class Kind(str, Enum):
     # same ``DESC_NNNN``; mixing QSTRING and bareword forms for the same
     # text yields distinct placeholders so the reverse path can restore
     # the original wrapping. Braced form is deferred to v0.0.5.
+    PROFILE = "PROFILE"  # ``ltm profile <subtype> /path { ... }`` objects.
+    # Subtype-agnostic — http, tcp, clientssl, oneconnect, fastL4, etc.
+    # all share the same registration path. BIG-IP factory built-in
+    # profile leaf names (``/Common/http``, ``/Common/tcp``, etc.) are
+    # exempt and pass through literal — universal BIG-IP signal, not
+    # customer identity. Custom profiles get ``PROFILE_NNNN``.
 
 
 _RFC5737_NETWORKS = (
