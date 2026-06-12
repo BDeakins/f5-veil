@@ -34,6 +34,7 @@ from types import MappingProxyType
 from .ad_dn_discovery import discover_ad_dns
 from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
+from .fqdn_discovery import discover_fqdns
 from .ip_discovery import discover_ip_literals
 from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
@@ -156,6 +157,13 @@ def scan(
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
     discover_ad_dns(src, ledger, diagnostics)
+    # Pass 2.0 — internal-FQDN discovery (v1.2). Catches
+    # ``example.local`` / ``foo.lan`` / ``host.home.arpa`` shapes
+    # embedded anywhere in WORD or QSTRING tokens. Pre-v1.2 these
+    # leaked verbatim (the leak detector flagged them but nothing
+    # redacted them). Public-internet FQDNs (``vendor.example.com``)
+    # pass through.
+    discover_fqdns(src, ledger, diagnostics)
     return ledger, diagnostics
 
 
@@ -209,14 +217,43 @@ def _path_already_registered(ledger: Ledger, path: str) -> bool:
 def _find_unknown_header_path(
     tokens: list[Token], start: int, lbrace_idx: int
 ) -> Token | None:
-    """Find the rightmost ``/Partition/leaf`` path bareword between
-    ``start`` and ``lbrace_idx`` (exclusive). Returns None if no such
-    token exists — some unknown blocks (e.g. ``sys global-settings``)
-    have no path component."""
+    """Find the rightmost ``/Partition/leaf`` path between ``start`` and
+    ``lbrace_idx`` (exclusive). Returns the WORD token directly, OR a
+    synthetic WORD-shaped Token for QSTRING-wrapped paths (the
+    customer's identifier had a space, so TMSH quoted it — e.g.
+    ``security bot-defense signature "/Common/Example Bot B"``).
+    Returns None if no such token exists — some unknown blocks
+    (e.g. ``sys global-settings``) have no path component.
+
+    The synthetic Token's ``value`` is the path WITHOUT the wrapping
+    quotes; offset/length point into the QSTRING content (skipping
+    the opening quote). This lets ``_register`` and the downstream
+    ledger entry use the bare path as the canonical original, so
+    pass-2's QSTRING substring substitution finds and replaces it
+    cleanly inside the original ``"..."`` token."""
     for k in range(lbrace_idx - 1, start, -1):
         tk = tokens[k]
         if tk.kind == TokKind.WORD and tk.value.startswith("/"):
             return tk
+        # QSTRING-wrapped path: ``"/Common/<name with spaces>"``.
+        # Require at least 2 chars (the wrapping quotes) and a leading
+        # ``/`` inside. Substring length > 0 is implied by the leading
+        # ``/`` check (since a 2-char QSTRING ``""`` is empty).
+        if (
+            tk.kind == TokKind.QSTRING
+            and len(tk.value) >= 3
+            and tk.value[0] == '"'
+            and tk.value[-1] == '"'
+            and tk.value[1] == "/"
+        ):
+            stripped = tk.value[1:-1]
+            return Token(
+                kind=TokKind.WORD,
+                value=stripped,
+                offset=tk.offset + 1,
+                length=tk.length - 2,
+                line=tk.line,
+            )
     return None
 
 
