@@ -15,6 +15,8 @@ Exit codes
 - 2 — user / argument error (missing required flag, file already exists)
 - 3 — I/O error (read or write failure)
 - 4 — decryption failed (wrong passphrase or tampered answer file)
+- 5 — leak detector tripped under ``--strict`` (sanitized output contained
+  one or more substitution survivors that look like customer data)
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from pathlib import Path
 
 from .answer_file import AnswerFileError, read_answer_file, write_answer_file
 from .diagnostics import Diagnostics
+from .leak_detector import LeakReport, scan_leaks
 from .ledger import Ledger
 from .scanner import scan
 from .substitute import reverse_substitute, substitute
@@ -37,6 +40,7 @@ EXIT_FAIL_CLOSED = 1
 EXIT_USER_ERROR = 2
 EXIT_IO_ERROR = 3
 EXIT_DECRYPTION_FAILED = 4
+EXIT_LEAK_DETECTED = 5
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,6 +104,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true",
         help="Overwrite existing --output and --answer-file paths.",
     )
+    obf.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "Run the post-substitution leak detector and abort with exit "
+            "code 5 if any potential leak survives. Without --strict, "
+            "leaks are warned-to-stderr but obfuscation proceeds."
+        ),
+    )
     obf.set_defaults(func=_cmd_obfuscate)
 
     deobf = sub.add_parser(
@@ -151,9 +163,10 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
     diag_report = _diagnostics_summary(diag)
+    leak_report = scan_leaks(sanitized)
 
     if args.dry_run:
-        _err(_dry_run_summary(ledger, diag))
+        _err(_dry_run_summary(ledger, diag, leak_report))
         return EXIT_OK
 
     if diag_report and not args.allow_incomplete:
@@ -164,6 +177,21 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
     if diag_report:
         _err("warning: proceeding with --allow-incomplete:")
         _err(diag_report)
+
+    if leak_report:
+        leak_summary = _leak_report_summary(leak_report)
+        if args.strict:
+            _err(
+                f"leak detector found {len(leak_report)} potential leak(s); "
+                f"--strict set, aborting before write:"
+            )
+            _err(leak_summary)
+            return EXIT_LEAK_DETECTED
+        _err(
+            f"warning: leak detector found {len(leak_report)} potential "
+            f"leak(s) (pass --strict to fail on this):"
+        )
+        _err(leak_summary)
 
     if not args.answer_file:
         _err("--answer-file is required (unless --dry-run)")
@@ -413,7 +441,9 @@ def _diagnostics_summary(diag: Diagnostics) -> str:
     return "\n".join(lines)
 
 
-def _dry_run_summary(ledger: Ledger, diag: Diagnostics) -> str:
+def _dry_run_summary(
+    ledger: Ledger, diag: Diagnostics, leak_report: LeakReport,
+) -> str:
     lines = ["dry-run summary:"]
     lines.append(f"  total ledger entries: {len(ledger)}")
     for kind, count in sorted(
@@ -426,4 +456,21 @@ def _dry_run_summary(ledger: Ledger, diag: Diagnostics) -> str:
         lines.append(diag_report)
     else:
         lines.append("diagnostics: clean")
+    if leak_report:
+        lines.append(f"leak detector: {len(leak_report)} potential leak(s)")
+        lines.append(_leak_report_summary(leak_report))
+    else:
+        lines.append("leak detector: clean")
+    return "\n".join(lines)
+
+
+def _leak_report_summary(report: LeakReport) -> str:
+    lines: list[str] = []
+    for leak in report.leaks[:20]:
+        lines.append(
+            f"  line {leak.line}:{leak.col} [{leak.kind.value}] "
+            f"{leak.token} ({leak.reason})"
+        )
+    if len(report.leaks) > 20:
+        lines.append(f"  ... and {len(report.leaks) - 20} more")
     return "\n".join(lines)

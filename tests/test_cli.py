@@ -6,6 +6,7 @@ from veil.cli import (
     EXIT_DECRYPTION_FAILED,
     EXIT_FAIL_CLOSED,
     EXIT_IO_ERROR,
+    EXIT_LEAK_DETECTED,
     EXIT_OK,
     EXIT_USER_ERROR,
     main,
@@ -385,3 +386,161 @@ def test_obfuscate_requires_input_flag(capsys):
 def test_deobfuscate_requires_input_and_answer_file(capsys):
     with pytest.raises(SystemExit):
         main(["deobfuscate"])
+
+
+# ----- leak detector / --strict ---------------------------------------
+
+
+# A config whose ``description`` value contains a leaky internal IP. The
+# description body passes through pass-2 verbatim and surfaces as an
+# ``unredacted_description`` diagnostic, so callers need --allow-incomplete
+# to reach the leak-detector phase. This is exactly the use case --strict
+# is designed for: the operator opted into incompleteness but still wants a
+# substitution-survivor gate.
+_LEAKY_CFG = (
+    "ltm pool /Common/foo {\n"
+    '    description "primary node at 10.0.0.42"\n'
+    "}\n"
+)
+_CLEAN_CFG = "ltm pool /Common/foo {\n}\n"
+
+
+def test_obfuscate_strict_no_leaks_exit_ok(tmp_path, monkeypatch):
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_CLEAN_CFG)
+    answer = tmp_path / "answers.enc"
+    sanitized = tmp_path / "sanitized.conf"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--output", str(sanitized),
+        "--answer-file", str(answer),
+        "--strict",
+    ])
+    assert code == EXIT_OK
+    assert sanitized.exists()
+    assert answer.exists()
+
+
+def test_obfuscate_strict_with_leaks_returns_5_writes_nothing(
+    tmp_path, monkeypatch, capsys,
+):
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_LEAKY_CFG)
+    answer = tmp_path / "answers.enc"
+    sanitized = tmp_path / "sanitized.conf"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--output", str(sanitized),
+        "--answer-file", str(answer),
+        "--allow-incomplete",
+        "--strict",
+    ])
+    assert code == EXIT_LEAK_DETECTED
+    # Crash safety: no answer file, no sanitized output on strict abort.
+    assert not answer.exists()
+    assert not sanitized.exists()
+    captured = capsys.readouterr()
+    assert "leak detector" in captured.err.lower()
+    assert "10.0.0.42" in captured.err
+
+
+def test_obfuscate_default_with_leaks_warns_and_proceeds(
+    tmp_path, monkeypatch, capsys,
+):
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_LEAKY_CFG)
+    answer = tmp_path / "answers.enc"
+    sanitized = tmp_path / "sanitized.conf"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--output", str(sanitized),
+        "--answer-file", str(answer),
+        "--allow-incomplete",
+    ])
+    assert code == EXIT_OK
+    assert sanitized.exists()
+    assert answer.exists()
+    captured = capsys.readouterr()
+    assert "warning" in captured.err.lower()
+    assert "leak" in captured.err.lower()
+    assert "--strict" in captured.err  # surfaces the upgrade hint
+
+
+def test_obfuscate_dry_run_reports_leaks(tmp_path, monkeypatch, capsys):
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_LEAKY_CFG)
+    answer = tmp_path / "answers.enc"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--answer-file", str(answer),
+        "--dry-run",
+    ])
+    assert code == EXIT_OK
+    captured = capsys.readouterr()
+    assert "leak detector" in captured.err.lower()
+    assert "10.0.0.42" in captured.err
+
+
+def test_obfuscate_dry_run_clean_input_reports_clean(
+    tmp_path, monkeypatch, capsys,
+):
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_CLEAN_CFG)
+    answer = tmp_path / "answers.enc"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--answer-file", str(answer),
+        "--dry-run",
+    ])
+    assert code == EXIT_OK
+    captured = capsys.readouterr()
+    assert "leak detector: clean" in captured.err
+
+
+def test_obfuscate_strict_flag_appears_in_help(capsys):
+    with pytest.raises(SystemExit):
+        main(["obfuscate", "--help"])
+    captured = capsys.readouterr()
+    assert "--strict" in captured.out
+
+
+def test_strict_with_diagnostics_fail_closed_prefers_exit_1(
+    tmp_path, monkeypatch,
+):
+    # When both gates would fire — diagnostics non-empty AND --strict
+    # would catch a leak — the diagnostics fail-closed (exit 1) wins
+    # because it indicates a more fundamental scanner gap. Leak detection
+    # in that case operates on incomplete substitution and shouldn't be
+    # the reported error.
+    inp = tmp_path / "bigip.conf"
+    inp.write_text(_LEAKY_CFG)
+    answer = tmp_path / "answers.enc"
+    sanitized = tmp_path / "sanitized.conf"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test")
+    code = main([
+        "obfuscate",
+        "--input", str(inp),
+        "--output", str(sanitized),
+        "--answer-file", str(answer),
+        "--strict",
+        # NB: NOT passing --allow-incomplete here.
+    ])
+    assert code == EXIT_FAIL_CLOSED  # diag wins over strict
+    assert not answer.exists()
+    assert not sanitized.exists()

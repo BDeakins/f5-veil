@@ -1,9 +1,10 @@
 # f5-veil Architecture
 
-Status: v0.0.1 — pass-1 scanner + ledger + pass-2 substitution + AES-256-GCM
-answer file + `veil obfuscate` / `veil deobfuscate` CLI landed. Tracer-bullet
-object scope only (pool, virtual, node, monitor, rule, partition). Description
-redaction, full GTM/profile/ASM coverage, and leak detector still pending.
+Status: v0.0.2 — pass-1 scanner + ledger + pass-2 substitution + AES-256-GCM
+answer file + `veil obfuscate` / `veil deobfuscate` CLI + post-substitution
+leak detector with `--strict` mode landed. Tracer-bullet object scope only
+(pool, virtual, node, monitor, rule, partition). Description redaction and
+full GTM/profile/ASM coverage still pending.
 
 ## Goal
 
@@ -152,13 +153,52 @@ A mismatch indicates a parser/scanner gap — fail closed.
 
 ## Leak detector
 
-Post-obfuscation pass over the sanitized output. Flags:
-- RFC1918 IPv4 addresses (`10/8`, `172.16/12`, `192.168/16`).
-- Internal-shaped FQDNs (`.local`, `.corp`, `.lan`, `.internal`).
-- MAC addresses.
-- Identifier-shaped barewords that don't match a placeholder pattern.
+Pure function over the sanitized output, runs between `substitute()` and
+the disk-write step. Returns a `LeakReport`; the CLI surfaces leaks to
+stderr and (under `--strict`) aborts with exit code 5 before any file
+lands on disk.
 
-Default: warn and continue. `--strict`: abort obfuscation.
+### Flagged content
+
+| Kind | Source | Reason label |
+|------|--------|--------------|
+| `RFC1918_IPV4` | `10/8`, `172.16/12`, `192.168/16` | RFC 1918 private |
+| `CGNAT_IPV4` | `100.64/10` | RFC 6598 CGNAT |
+| `LINKLOCAL_IPV4` | `169.254/16` | RFC 3927 link-local |
+| `LOOPBACK_IPV4` | `127/8` | RFC 1122 loopback |
+| `ULA_IPV6` | `fc00::/7` | RFC 4193 ULA |
+| `LINKLOCAL_IPV6` | `fe80::/10` | RFC 4291 link-local |
+| `LOOPBACK_IPV6` | `::1` | RFC 4291 loopback |
+| `INTERNAL_FQDN` | `.local`, `.corp`, `.lan`, `.internal`, `.intranet`, `.lan.local`, `.home.arpa`, `.private` | `<suffix>` |
+| `MAC_ADDRESS` | `xx:xx:...`, `xx-xx-...`, Cisco `xxxx.xxxx.xxxx` | MAC address |
+| `IDENTIFIER_BAREWORD` | letter-led token with embedded digit/underscore/hyphen, not in TMSH keyword set, not a placeholder | identifier-shaped bareword |
+| `IDENTIFIER_PATH` | path-shaped token whose partition piece isn't `/Common/` or `/PARTITION_NNNN/` | non-safe partition |
+
+### Exemptions
+
+- RFC 5737 IPv4 documentation ranges (`192.0.2/24`, `198.51.100/24`,
+  `203.0.113/24`) — the obfuscator's IP placeholders.
+- RFC 3849 IPv6 documentation range (`2001:db8::/32`).
+- Literal `Common` — universal BIG-IP signal.
+- Tokens matching `^(POOL|VS|NODE|MON|IRULE|PARTITION|UNK)_\d{4,}$`.
+- A curated TMSH keyword set covers ordinary attribute words
+  (`enabled`, `description`, `members`, profile names, etc.) so the
+  bareword heuristic doesn't drown the operator.
+
+### Behaviour
+
+- Default mode: any leaks print to stderr as warnings; obfuscation
+  proceeds; exit code 0. Output also hints `pass --strict to fail on this`.
+- `--strict`: any non-empty `LeakReport` aborts with exit code 5 *before*
+  the answer file or sanitized output is written. Same crash-safety
+  guarantee as the diagnostics fail-closed path.
+- `--dry-run`: the leak report appears in the dry-run summary regardless
+  of `--strict`.
+
+The detector is heuristic — clean reports are strong evidence,
+non-empty reports require operator review. The IPv4 / IPv6 / MAC / FQDN
+checks are deterministic; the `IDENTIFIER_BAREWORD` heuristic intentionally
+errs toward noise rather than miss a real customer label.
 
 ## v0.1 module map
 
@@ -174,6 +214,8 @@ src/veil/
   substitute.py      substitute(src, ledger, diag), reverse_substitute(...)
   answer_file.py     write_answer_file(...), read_answer_file(...),
                      AnswerFileError
+  leak_detector.py   scan_leaks(sanitized) -> LeakReport,
+                     LeakKind, Leak
 ```
 
 ## CLI semantics
@@ -181,7 +223,8 @@ src/veil/
 - **Default is fail-closed.** Any non-empty Diagnostics field aborts
   obfuscation with exit code 1; no sanitized output and no answer file
   written. `--allow-incomplete` is the explicit opt-in to proceed.
-- **`--strict` reserved** for the future leak-detector PR.
+- **`--strict`** runs the leak detector over the sanitized output and
+  aborts with exit code 5 if any flagged content survived substitution.
 - **Crash-safe ordering:** answer file lands on disk before sanitized
   output. A crash mid-pipeline never produces a sanitized file orphaned
   from its decryption key.
@@ -202,6 +245,7 @@ src/veil/
 | 2 | user / argument error (missing flag, file exists, etc.) |
 | 3 | I/O error |
 | 4 | decryption failed (wrong passphrase or tampered answer file) |
+| 5 | leak detector tripped under `--strict` |
 
 ## Known gaps (deferred to follow-up PRs)
 
