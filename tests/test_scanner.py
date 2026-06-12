@@ -104,15 +104,16 @@ def test_unknown_ltm_subtype_emits_diagnostic_not_ledger_entry():
     assert ("ltm dns", 1) in diag.unknown_top_level
 
 
-def test_gtm_block_is_recorded_in_diagnostics():
+def test_gtm_block_is_recorded_in_diagnostics_and_path_is_registered():
     # GTM is on the v1.0 roadmap but not implemented yet. A `gtm wideip`
     # header must NOT pass through silently — that's the career-ending
-    # leak CRUCIBLE C-2 was about.
+    # leak CRUCIBLE C-2 was about. Updated PR #6: the header PATH is now
+    # registered as Kind.UNKNOWN so pass-2 substitutes it, preventing
+    # prefix-substring leaks against registered LTM identifiers.
     src = "gtm wideip /Common/app.example.com {\n  pools none\n}\n"
     ledger, diag = scan(src)
     assert ("gtm wideip", 1) in diag.unknown_top_level
-    # No ledger entries should have been minted.
-    assert len(ledger) == 0
+    assert (Kind.UNKNOWN, "/Common/app.example.com") in ledger.by_original
 
 
 def test_malformed_path_with_empty_leaf_is_surfaced_to_diagnostics():

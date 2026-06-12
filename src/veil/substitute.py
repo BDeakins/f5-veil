@@ -12,8 +12,30 @@ Path-piece rendering (locked architecture):
 - ``/Tenant_A/foo_pool`` -> ``/PARTITION_0001/POOL_0001`` — the partition
   itself is also placeholdered.
 
+Member-port suffix handling
+---------------------------
+WORD tokens like ``/Common/10.0.0.1:80`` are handled via longest-prefix
+match with non-word-character boundary detection. The matched prefix
+becomes the substituted placeholder; the suffix (``:80``, ``.80``,
+``%rd0`` etc.) is preserved. Forward and reverse substitution use
+symmetric logic so the round-trip works cleanly.
+
+Kind.UNKNOWN handling
+---------------------
+Top-level blocks whose module/subtype isn't in the recognised set
+(profiles, GTM, ASM, DG, etc.) get their header path registered as
+``Kind.UNKNOWN`` so pass-2 substitutes it — without this, an unknown
+block's header path (e.g. ``gtm pool /Common/<node>_servers``) would
+leak any registered LTM identifier whose path is a prefix of it.
+``Kind.UNKNOWN`` is best-effort: a UNK path can still leak via
+substring inside a longer non-header bareword in another block's body
+(no current diagnostic catches that), or via QSTRING contents
+(flagged by ``qstring_contains_identifier``). The safety-critical
+kinds (POOL/VS/NODE/MON/IRULE) do not have this caveat — their
+substitution is strictly enforced.
+
 Known gaps deferred to follow-up PRs (each surfaces as a Diagnostics
-entry so callers can fail closed):
+entry where applicable so callers can fail closed):
 - QSTRING content substitution. ``"foo /Common/bar baz"`` containing a
   ledger original surfaces ``qstring_contains_identifier`` but the
   string body is emitted verbatim.
@@ -32,6 +54,12 @@ entry so callers can fail closed):
 - Unterminated QSTRINGs (source has an opening quote with no close)
   scan to EOF; the qstring-contains-identifier check still runs on the
   EOF-truncated content. Edge case, deferred.
+- Substring-in-bareword leaks for ``Kind.UNKNOWN`` paths. When a UNK
+  header path is a substring of a longer non-header bareword reference
+  elsewhere (with word-character boundary), prefix-match correctly
+  rejects but the literal UNK path appears as substring. Closing this
+  requires either tokenizer-level path detection or a substring
+  diagnostic — deferred.
 """
 
 from __future__ import annotations
@@ -39,6 +67,16 @@ from __future__ import annotations
 from .diagnostics import Diagnostics
 from .ledger import Kind, Ledger, LedgerEntry, Ref
 from .tokenizer import Token, TokKind, tokenize
+
+# Characters considered "word characters" — a prefix-match WORD token is
+# rejected if the character at the boundary position falls in this set,
+# so e.g. ``/Common/web`` is NOT a prefix of ``/Common/web_pool`` (word
+# boundary failure) but IS a prefix of ``/Common/web:80`` (non-word ':').
+# This covers both IPv4 ``:port`` and IPv6 ``.port`` / ``%route-domain``
+# suffixes — anything not in this set qualifies as a boundary.
+_WORD_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+)
 
 
 def substitute(
@@ -83,9 +121,7 @@ def substitute(
 
 def _emit_token(tok: Token, ledger: Ledger, diagnostics: Diagnostics) -> str:
     if tok.kind == TokKind.WORD:
-        # A bareword can match at most one (kind, value) pair because
-        # by_original is keyed on both, but the kind of an in-body
-        # bareword isn't known up-front — scan all kinds.
+        # 1. Exact match — fast path for ordinary identifiers.
         for kind in Kind:
             placeholder = ledger.by_original.get((kind, tok.value))
             if placeholder is None:
@@ -96,12 +132,50 @@ def _emit_token(tok: Token, ledger: Ledger, diagnostics: Diagnostics) -> str:
                 Ref(byte_offset=tok.offset, length=tok.length, line=tok.line),
             )
             return _render_placeholder(entry, ledger, tok)
+        # 2. Longest-prefix match with non-word boundary — covers
+        # member-port suffix tokens like ``/Common/10.0.0.1:80`` and
+        # IPv6 ``/Common/2001:db8::1.80`` / route-domain ``%rd0`` forms.
+        # Without this, those leak the literal path via substring.
+        prefix_hit = _find_longest_prefix_match(tok.value, ledger)
+        if prefix_hit is not None:
+            entry, prefix_len = prefix_hit
+            ledger.record_reference(
+                entry.placeholder,
+                Ref(byte_offset=tok.offset, length=prefix_len, line=tok.line),
+            )
+            return (
+                _render_placeholder(entry, ledger, tok) + tok.value[prefix_len:]
+            )
         return tok.value
     if tok.kind == TokKind.QSTRING:
         _check_qstring_for_identifier(tok, ledger, diagnostics)
         return tok.value
     # LBRACE, RBRACE, COMMENT pass through verbatim.
     return tok.value
+
+
+def _find_longest_prefix_match(
+    value: str, ledger: Ledger
+) -> tuple[LedgerEntry, int] | None:
+    """Find the longest ledger original that is a strict prefix of
+    ``value`` followed by a non-word-character boundary. Returns
+    ``(entry, prefix_len)`` or ``None`` if no candidate matches."""
+    best_entry: LedgerEntry | None = None
+    best_len = 0
+    value_len = len(value)
+    for (_kind, original), placeholder in ledger.by_original.items():
+        original_len = len(original)
+        if original_len >= value_len or original_len <= best_len:
+            continue
+        if not value.startswith(original):
+            continue
+        if value[original_len] in _WORD_CHARS:
+            continue
+        best_entry = ledger.entries[placeholder]
+        best_len = original_len
+    if best_entry is None:
+        return None
+    return best_entry, best_len
 
 
 def _render_placeholder(entry: LedgerEntry, ledger: Ledger, tok: Token) -> str:
@@ -223,6 +297,11 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     Tokens that don't match the reverse map pass through verbatim — this
     is how the AI's newly-introduced content (e.g. new iRule code) is
     preserved while still restoring any placeholder it referenced.
+
+    Matching is symmetric with :func:`substitute`: exact match first,
+    then longest-prefix match with non-word boundary, so port-suffix
+    tokens like ``/Common/NODE_0001:80`` round-trip back to
+    ``/Common/10.0.0.1:80`` cleanly.
     """
     reverse_map = _build_reverse_map(ledger)
     tokens = list(tokenize(sanitized))
@@ -231,14 +310,45 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     for tok in tokens:
         if tok.offset > cursor:
             out.append(sanitized[cursor:tok.offset])
-        if tok.kind == TokKind.WORD and tok.value in reverse_map:
-            out.append(reverse_map[tok.value])
+        if tok.kind == TokKind.WORD:
+            if tok.value in reverse_map:
+                out.append(reverse_map[tok.value])
+            else:
+                hit = _find_longest_reverse_prefix(tok.value, reverse_map)
+                if hit is not None:
+                    prefix_len, original = hit
+                    out.append(original + tok.value[prefix_len:])
+                else:
+                    out.append(tok.value)
         else:
             out.append(tok.value)
         cursor = tok.offset + tok.length
     if cursor < len(sanitized):
         out.append(sanitized[cursor:])
     return "".join(out)
+
+
+def _find_longest_reverse_prefix(
+    value: str, reverse_map: dict[str, str]
+) -> tuple[int, str] | None:
+    """Symmetric counterpart to :func:`_find_longest_prefix_match` that
+    walks the rendered-placeholder map instead of the ledger."""
+    best_len = 0
+    best_original: str | None = None
+    value_len = len(value)
+    for placeholder, original in reverse_map.items():
+        placeholder_len = len(placeholder)
+        if placeholder_len >= value_len or placeholder_len <= best_len:
+            continue
+        if not value.startswith(placeholder):
+            continue
+        if value[placeholder_len] in _WORD_CHARS:
+            continue
+        best_len = placeholder_len
+        best_original = original
+    if best_original is None:
+        return None
+    return best_len, best_original
 
 
 def _build_reverse_map(ledger: Ledger) -> dict[str, str]:

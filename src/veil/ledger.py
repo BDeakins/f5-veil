@@ -30,6 +30,11 @@ class Kind(str, Enum):
     MON = "MON"
     IRULE = "IRULE"
     PARTITION = "PARTITION"
+    UNKNOWN = "UNK"  # top-level block of an unrecognized kind whose path
+    # is still identifying. EXAMPLE_CORPUS integration surfaced cases where
+    # an unknown block's header path (e.g. ``gtm pool /Common/x_servers``)
+    # shares a prefix with a registered NODE — without substituting the
+    # UNKNOWN path, the NODE's full path leaks via substring.
 
 
 @dataclass(frozen=True)

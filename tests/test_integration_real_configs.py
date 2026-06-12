@@ -43,6 +43,16 @@ skip_if_no_real_configs = pytest.mark.skipif(
 # bare name (e.g. ``Tenant_A``) can legitimately appear inside a
 # ``description`` body or a ``QSTRING``, both of which are deferred
 # Diagnostics gaps, not parser misses.
+# Kinds whose ``entry.original`` is a full ``/Partition/leaf`` path that
+# pass-2 MUST substitute everywhere. PARTITION is excluded because its
+# bare name can legitimately appear inside descriptions or QSTRINGs
+# (deferred Diagnostics gaps). UNKNOWN is excluded because it is a
+# best-effort catch-all for unrecognised top-level block headers — it
+# can still leak via substring inside longer non-header barewords in
+# other blocks' bodies (no current diagnostic catches that), and via
+# QSTRING contents (flagged by qstring_contains_identifier). The
+# primary safety invariant — that NODE/VS/POOL/MON/IRULE full paths
+# never appear in sanitized output — is enforced strictly.
 _PATH_BEARING_KINDS = {
     Kind.POOL,
     Kind.VS,
@@ -117,19 +127,6 @@ def test_real_config_round_trip_via_cli_is_byte_identical(
 
 
 @skip_if_no_real_configs
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Known gap surfaced by EXAMPLE_CORPUS integration run 2026-06-12: "
-        "member-port suffix tokens (e.g. '/Common/10.0.0.1:80') do not "
-        "match the exact-string ledger key '/Common/10.0.0.1', so the "
-        "literal path leaks via substring inside the :port-suffixed "
-        "WORD token. Fix is prefix-match substitution with non-word "
-        "boundary detection — slated for the next FORGE PR. When that "
-        "lands, this test flips to XPASS and the marker should be "
-        "removed."
-    ),
-)
 @pytest.mark.parametrize("config_path", _REAL_CONFIGS, ids=_config_id)
 def test_real_config_sanitized_does_not_leak_path_bearing_originals(
     config_path: Path,

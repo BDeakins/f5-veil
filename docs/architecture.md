@@ -221,9 +221,15 @@ src/veil/
   `unknown_top_level` diagnostic; pass-2 callers fail closed.
 - **Folder semantics.** `/Common/folder/sub/leaf` collapses folder
   into the leaf placeholder; folder-as-own-kind (FOLDER_NNNN) deferred.
-- **Member-port suffix handling.** `/Common/web1:80` does not match
-  the node `/Common/web1` (different bareword). Member-port refs pass
-  through verbatim; covered by a follow-up PR.
+- **Member-port suffix handling.** ~~`/Common/web1:80` does not match
+  the node `/Common/web1` (different bareword).~~ Closed by PR #6 via
+  longest-prefix match with non-word boundary detection.
+- **Unknown-block path leaks.** Closed by PR #6 — top-level blocks of
+  unrecognised kinds (profiles, GTM, ASM, etc.) get their header path
+  registered as `Kind.UNKNOWN` so pass-2 substitutes it. Best-effort
+  only: UNK paths can still leak via substring inside longer
+  non-header barewords. Safety-critical kinds
+  (POOL/VS/NODE/MON/IRULE) remain strictly enforced.
 - **Persistent cross-run identifier map** (v2.0).
 - **`bigip_base.conf` multi-file two-pass** (v1.1).
 - **UCS archive ingestion** (v1.2).

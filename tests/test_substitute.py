@@ -143,10 +143,16 @@ def test_substitute_works_with_already_frozen_ledger():
     assert "/Common/POOL_0001" in sanitized
 
 
-def test_unknown_top_level_block_body_is_passed_through_unchanged():
+def test_unknown_top_level_block_header_path_is_substituted():
+    # Updated PR #6: the unknown-block header path is registered as
+    # Kind.UNKNOWN and substituted by pass-2 (was: passed through
+    # verbatim). Body content with no matching ledger entries still
+    # passes through unchanged.
     src = "gtm wideip /Common/app.example.com {\n  pools none\n}\n"
     sanitized, diag = _scan_and_substitute(src)
-    assert "/Common/app.example.com" in sanitized
+    assert "/Common/app.example.com" not in sanitized
+    assert "/Common/UNK_0001" in sanitized
+    assert "pools none" in sanitized  # body content unchanged
     assert ("gtm wideip", 1) in diag.unknown_top_level
 
 
@@ -207,6 +213,158 @@ def test_substitute_raises_on_unresolvable_partition_rather_than_leak():
     )
 
 
+def test_unknown_block_header_path_is_registered_as_unknown_kind():
+    # EXAMPLE_CORPUS integration surfaced a leak where an unknown-block header
+    # path (e.g. gtm pool /Common/<node>_servers) shares a prefix with a
+    # registered NODE. Without registering the UNKNOWN path, the NODE's
+    # full path leaks via substring inside the unknown header. After the
+    # fix, the unknown path gets substituted to /Common/UNK_NNNN.
+    src = (
+        "ltm node /Common/web1 {\n"
+        "}\n"
+        "gtm pool /Common/web1_servers {\n"
+        "    members none\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    # The unknown header path is registered.
+    assert (Kind.UNKNOWN, "/Common/web1_servers") in ledger.by_original
+    # The unknown header is substituted (no literal /Common/web1_servers).
+    assert "/Common/web1_servers" not in sanitized
+    # The NODE's path no longer leaks as substring.
+    assert "/Common/web1" not in sanitized
+    # The unknown diagnostic still fires so callers fail closed by default.
+    assert ("gtm wideip", 1) not in diag.unknown_top_level  # not gtm wideip
+    assert any(sig == "gtm pool" for sig, _ in diag.unknown_top_level)
+
+
+def test_unknown_block_skips_registration_if_path_already_known():
+    # When the same /Partition/name appears as both a known-kind
+    # top-level (e.g. ltm pool) AND an unknown-kind top-level (e.g.
+    # gtm pool), the known kind wins. Without this skip, the UNK
+    # entry becomes an orphan because pass-2's Kind iteration matches
+    # the more specific kind first.
+    src = (
+        "ltm pool /Common/shared_name {\n"
+        "}\n"
+        "gtm pool /Common/shared_name {\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    assert (Kind.POOL, "/Common/shared_name") in ledger.by_original
+    assert (Kind.UNKNOWN, "/Common/shared_name") not in ledger.by_original
+    # The gtm pool block is still flagged as unknown.
+    assert any(sig == "gtm pool" for sig, _ in diag.unknown_top_level)
+
+
+def test_unknown_block_with_no_path_does_not_break_scan():
+    # Some unknown blocks have no /Partition/leaf path token (e.g. a
+    # ``sys global-settings`` block). Registration should skip cleanly.
+    src = "sys global-settings {\n    hostname foo\n}\n"
+    ledger, diag = scan(src)
+    assert ("sys global-settings", 1) in diag.unknown_top_level
+    assert (Kind.UNKNOWN, "global-settings") not in ledger.by_original
+
+
+def test_member_port_suffix_does_not_leak_node_path():
+    # The bug EXAMPLE_CORPUS integration surfaced: /Common/10.0.0.1:80 is a
+    # single WORD token, distinct from the ledger key /Common/10.0.0.1.
+    # Prefix-match must substitute the path portion and preserve :80.
+    src = (
+        "ltm node /Common/10.0.0.1 {\n"
+        "    address 10.0.0.1\n"
+        "}\n"
+        "ltm pool /Common/foo {\n"
+        "    members {\n"
+        "        /Common/10.0.0.1:80 { }\n"
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    # The literal node path must not appear anywhere — not standalone,
+    # not as substring of a :port token.
+    assert "10.0.0.1" not in sanitized.replace("10.0.0.1", "ZZZ", 1) or "/Common/10.0.0.1" not in sanitized
+    # Cleaner check: the rendered prefix-substituted token is present.
+    assert "/Common/NODE_0001:80" in sanitized
+    # And the literal full path isn't.
+    assert "/Common/10.0.0.1" not in sanitized
+
+
+def test_prefix_match_picks_longest_candidate():
+    src = "ltm node /Common/web {\n}\nltm node /Common/web1 {\n}\n"
+    ledger, diag = scan(src)
+    # Add a synthetic body line via a second scan/substitute pass would
+    # be awkward; instead, exercise substitute on the same src after
+    # appending a member-style line that doesn't have its own header.
+    extended = src + "members { /Common/web1:80 }\n"
+    sanitized, _ = substitute(extended, ledger, diag)
+    # /Common/web1 wins (longer prefix); /Common/web is rejected because
+    # the boundary character '1' is a word character.
+    web1_ph = ledger.by_original[(Kind.NODE, "/Common/web1")]
+    assert f"/Common/{web1_ph}:80" in sanitized
+
+
+def test_prefix_match_rejects_word_character_boundary():
+    src = "ltm node /Common/web {\n}\n"
+    ledger, diag = scan(src)
+    extended = src + "junk /Common/web_pool more\n"
+    sanitized, _ = substitute(extended, ledger, diag)
+    # /Common/web_pool must NOT prefix-match /Common/web because the
+    # boundary character '_' is a word char.
+    assert "/Common/web_pool" in sanitized
+
+
+def test_prefix_match_handles_ipv6_port_suffix_with_dot():
+    # IPv6 nodes can have member port references using '.' separator.
+    src = (
+        "ltm node /Common/2001:db8::1 {\n"
+        "}\n"
+        "ltm pool /Common/foo {\n"
+        "    members {\n"
+        "        /Common/2001:db8::1.80 { }\n"
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "2001:db8::1" not in sanitized
+    assert "/Common/NODE_0001.80" in sanitized
+
+
+def test_reverse_substitute_round_trips_port_suffix():
+    src = (
+        "ltm node /Common/10.0.0.1 {\n"
+        "}\n"
+        "ltm pool /Common/foo {\n"
+        "    members {\n"
+        "        /Common/10.0.0.1:80 { }\n"
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_reverse_substitute_round_trips_ipv6_with_dot_port():
+    src = (
+        "ltm node /Common/2001:db8::1 {\n"
+        "}\n"
+        "ltm pool /Common/foo {\n"
+        "    members {\n"
+        "        /Common/2001:db8::1.80 { }\n"
+        "    }\n"
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
 def test_reverse_substitute_round_trip_common_partition():
     src = "ltm pool /Common/foo {\n}\n"
     ledger, diag = scan(src)
@@ -251,6 +409,9 @@ def test_reverse_substitute_restores_bare_partition_token():
 
 
 def test_node_referenced_inside_pool_members_is_substituted():
+    # Updated after PR #6: prefix-match substitution closes the
+    # member-port suffix gap. /Common/web1:80 now substitutes the
+    # path prefix and preserves the :80 suffix.
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.1\n"
@@ -262,11 +423,8 @@ def test_node_referenced_inside_pool_members_is_substituted():
         "}\n"
     )
     sanitized, diag = _scan_and_substitute(src)
-    # The node is defined and its definition gets substituted.
     assert "/Common/NODE_0001" in sanitized
     assert "/Common/POOL_0001" in sanitized
-    # The `/Common/web1:80` token is NOT a clean match for /Common/web1
-    # — it's a different bareword. Expected to pass through verbatim.
-    # This documents the tracer-bullet gap: member-port suffix handling
-    # is a follow-up PR.
-    assert "/Common/web1:80" in sanitized
+    # Member-port suffix token now substitutes via prefix-match.
+    assert "/Common/NODE_0001:80" in sanitized
+    assert "/Common/web1" not in sanitized

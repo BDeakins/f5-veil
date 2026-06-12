@@ -89,7 +89,7 @@ def scan(
             continue
         # Unrecognised top-level header — record it and skip the block so
         # pass 2 callers can decide whether to fail closed.
-        consumed = _record_unknown_top_level(tokens, i, diagnostics)
+        consumed = _record_unknown_top_level(tokens, i, ledger, diagnostics)
         if consumed > 0:
             i += consumed
             depth = 1
@@ -101,11 +101,14 @@ def scan(
 def _record_unknown_top_level(
     tokens: list[Token],
     i: int,
+    ledger: Ledger,
     diagnostics: Diagnostics,
 ) -> int:
     """If ``tokens[i:]`` looks like an unrecognised top-level block
-    header (``<module> ... {``), log it to diagnostics and return the
-    tokens consumed up to and including the opening ``{``. Else 0."""
+    header (``<module> ... {``), log it to diagnostics, register the
+    header path as ``Kind.UNKNOWN`` so pass-2 substitution rewrites it
+    (preventing prefix-substring leaks), and return the tokens consumed
+    up to and including the opening ``{``. Else 0."""
     first = tokens[i].value
     if first not in _KNOWN_MODULES:
         return 0
@@ -121,7 +124,39 @@ def _record_unknown_top_level(
     else:
         signature = first
     diagnostics.unknown_top_level.append((signature, tokens[i].line))
+    # Register the header path (the last bareword before LBRACE that
+    # starts with '/') so pass-2 substitutes it instead of letting the
+    # literal path leak via substring inside the unknown block header.
+    # Skip if the same path is already registered under any other kind —
+    # otherwise the UNK entry becomes an orphan (pass-2 substitutes via
+    # the more specific kind, which comes first in the Kind iteration).
+    path_tok = _find_unknown_header_path(tokens, i, j)
+    if path_tok is not None and not _path_already_registered(ledger, path_tok.value):
+        _register(ledger, Kind.UNKNOWN, path_tok, diagnostics)
     return (j - i) + 1  # consume through the LBRACE
+
+
+def _path_already_registered(ledger: Ledger, path: str) -> bool:
+    for kind in Kind:
+        if kind == Kind.UNKNOWN:
+            continue
+        if (kind, path) in ledger.by_original:
+            return True
+    return False
+
+
+def _find_unknown_header_path(
+    tokens: list[Token], start: int, lbrace_idx: int
+) -> Token | None:
+    """Find the rightmost ``/Partition/leaf`` path bareword between
+    ``start`` and ``lbrace_idx`` (exclusive). Returns None if no such
+    token exists — some unknown blocks (e.g. ``sys global-settings``)
+    have no path component."""
+    for k in range(lbrace_idx - 1, start, -1):
+        tk = tokens[k]
+        if tk.kind == TokKind.WORD and tk.value.startswith("/"):
+            return tk
+    return None
 
 
 def _try_match_object(
