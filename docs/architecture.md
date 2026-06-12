@@ -1,23 +1,24 @@
 # f5-veil Architecture
 
-Status: v0.0.14 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
-pass-1.8 (iRule `#` comment) + pass-1.9 (AD / LDAP distinguished name) +
-pass-2 substitution (full substring substitution applied to every
-QSTRING regardless of TMSH context) + AES-256-GCM answer file +
-obfuscate/deobfuscate CLI + leak detector with `--strict`. Object
+Status: v1.1.0 — pass-1 + pass-1.5 (IP with v1.1 infix BAREWORD scan) +
+pass-1.7 (description) + pass-1.8 (iRule `#` comment) + pass-1.9 (AD /
+LDAP distinguished name) + pass-2 substitution (full substring
+substitution applied to every QSTRING AND every BAREWORD regardless of
+TMSH context) + AES-256-GCM answer file + obfuscate/deobfuscate CLI +
+leak detector with `--strict`. Object
 scope: LTM pool / virtual / node / monitor / rule / partition /
 profile / data-group / snat / snatpool / virtual-address, GTM pool /
 wideip / server / datacenter / region, net vlan / route-domain / self
 / trunk, APM policy / profile, security firewall policy / rule-list /
 address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
 AND braced descriptions**; **Tcl `#` comments inside `ltm rule`
-bodies**; **identifier substring substitution inside every QSTRING**
-(applies to paths, IPs, partitions, AD DNs uniformly). gtm topology,
-net interface, security dos, apm aaa/sso/acl, full ASM coverage,
-`auth remote-role role-info` header paths, internal-FQDN discovery,
-and BAREWORD-level substring substitution (for IPs embedded in
-compound barewords like `https://10.0.0.42/path`) still pending —
-v1.1+ scope.
+bodies**; **identifier substring substitution inside every QSTRING AND every
+BAREWORD** (paths, IPs, partitions, AD DNs uniformly, including IPs
+embedded in compound URL-shaped barewords and IP ranges like
+`10.0.0.1-10.0.0.50`). gtm topology, net interface, security dos,
+apm aaa/sso/acl, full ASM coverage, `auth remote-role role-info`
+header paths, internal-FQDN discovery, and QSTRING-wrapped header
+paths (bot-defense signatures) still pending — v1.2+ scope.
 
 ## Goal
 

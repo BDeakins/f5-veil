@@ -117,10 +117,17 @@ def test_invalid_ip_octet_out_of_range_ignored():
     assert (Kind.IPADDR, "192.168.1.500") not in ledger.by_original
 
 
-def test_ip_substring_inside_larger_token_not_extracted():
-    # ``host_10.0.0.42_extra`` — IP is mid-token, prefix doesn't match.
+def test_ip_substring_inside_larger_token_IS_extracted():
+    """v1.1 — infix IP scan now interns IPs embedded inside compound
+    barewords (URL-shaped tokens, IP ranges, ``host_10.0.0.42_extra``,
+    etc.). The pre-v1.1 contract was "leading-IP only"; that lost the
+    URL case in real configs. Boundary check inside the regex
+    (``(?<![\\d.])`` / ``(?![\\d.])``) prevents partial matches against
+    longer numeric runs, so ``10.0.0.2222`` does NOT yield a spurious
+    ``10.0.0.222`` intern, but ``host_10.0.0.42_extra`` (where the
+    surrounding ``_`` chars satisfy the boundary) DOES intern."""
     ledger, _ = _scan("name host_10.0.0.42_extra\n")
-    assert (Kind.IPADDR, "10.0.0.42") not in ledger.by_original
+    assert (Kind.IPADDR, "10.0.0.42") in ledger.by_original
 
 
 def test_qstring_content_not_walked():

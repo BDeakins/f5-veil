@@ -6,18 +6,19 @@ AI is done.
 
 ## Status
 
-**v1.0** — production-shaped against real BIG-IP configurations.
+**v1.1** — production-shaped against real BIG-IP configurations.
 
 Covers ~25 object kinds across LTM, GTM, net, APM, and security
 firewall; bare IPv4 / IPv6 literals (substituted to RFC 5737 / RFC 3849
 documentation ranges with `/24` and `/64` source-subnet preservation);
 all three description body forms (QSTRING, bareword, and braced); Tcl
 `#` comments inside `ltm rule` bodies; identifier substring
-substitution inside every QSTRING (catches monitor send-strings, APM
-policy expressions, bot-defense signatures, etc.); and LDAP / AD
-distinguished names embedded in any QSTRING. AES-256-GCM-encrypted
-answer file with scrypt KDF. Round-trip is byte-exact for every shape
-the parser covers.
+substitution inside every QSTRING **and every BAREWORD** (catches
+monitor send-strings, APM policy expressions, bot-defense signatures,
+URL-shaped barewords like `https://10.0.0.42/path`, IP ranges like
+`10.0.0.1-10.0.0.50`); LDAP / AD distinguished names embedded in any
+QSTRING. AES-256-GCM-encrypted answer file with scrypt KDF. Round-trip
+is byte-exact for every shape the parser covers.
 
 Deferred to v1.1+ (see [docs/architecture.md](docs/architecture.md)):
 `bigip_base.conf` multi-file ingestion, UCS archive ingestion,

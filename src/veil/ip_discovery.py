@@ -62,6 +62,15 @@ _IPV4_WITH_SUFFIX_RE = re.compile(
     r"(?:/\d{1,2})?(?:%[A-Za-z0-9_]+)?(?::\d+)?$"
 )
 
+# v1.1 — IPv4 substring inside a compound BAREWORD. Catches IPs embedded
+# in URL-shaped tokens like ``https://10.0.0.222/path`` where the
+# leading-IP machinery above can't fire because the WORD starts with
+# ``https``. Boundary checks on both sides prevent false matches against
+# longer numeric runs (so ``10.0.0.2222`` does NOT yield two IPs).
+_IPV4_INFIX_RE = re.compile(
+    r"(?<![\d.])(?P<addr>\d{1,3}(?:\.\d{1,3}){3})(?![\d.])"
+)
+
 # Exclusion: TMSH wildcard keywords. These are bareword tokens, not IPs,
 # but explicit to short-circuit before regex matching.
 _WILDCARD_WORDS = frozenset({"any", "any6", "all"})
@@ -89,27 +98,49 @@ def discover_ip_literals(
             continue
         if tok.value in _WILDCARD_WORDS:
             continue
+        # 1. Leading IP (preserves port / route-domain / CIDR suffix
+        # handling via the WITH_SUFFIX regexes).
         addr_str = _extract_ip_prefix(tok.value)
-        if addr_str is None:
-            continue
-        try:
-            addr = ipaddress.ip_address(addr_str)
-        except ValueError:
-            continue
-        if _is_wildcard(addr):
-            continue
-        if isinstance(addr, ipaddress.IPv4Address) and _is_netmask(addr):
-            continue
-        ref = Ref(
-            byte_offset=tok.offset,
-            length=len(addr_str),
-            line=tok.line,
-        )
-        ledger.intern_ipaddr(addr_str, ref)
+        if addr_str is not None:
+            _try_intern(addr_str, tok.offset, tok.line, ledger)
+        # 2. v1.1 — Infix IPv4 substring scan. Catches IPs embedded
+        # inside compound barewords like
+        # ``application-uri https://10.0.0.222/path`` where the
+        # leading-IP path can't fire. Boundary check on the regex itself
+        # (`(?<![\d.])` / `(?![\d.])`) prevents partial matches against
+        # longer numeric runs.
+        for match in _IPV4_INFIX_RE.finditer(tok.value):
+            sub_addr = match.group("addr")
+            if sub_addr == addr_str:
+                # Same address as the leading-IP match — already interned.
+                continue
+            _try_intern(
+                sub_addr,
+                tok.offset + match.start("addr"),
+                tok.line,
+                ledger,
+            )
     # Surface any subnet collapse to diagnostics so callers can decide
     # whether to fail closed or accept reduced structural fidelity.
     for src_net in sorted(ledger.ipv4_collapsed_source_nets, key=str):
         diagnostics.ipv4_subnet_collapsed.append(str(src_net))
+
+
+def _try_intern(
+    addr_str: str, byte_offset: int, line: int, ledger: Ledger,
+) -> None:
+    """Validate and intern a candidate IP address string. Quietly drops
+    invalid, wildcard, or netmask shapes."""
+    try:
+        addr = ipaddress.ip_address(addr_str)
+    except ValueError:
+        return
+    if _is_wildcard(addr):
+        return
+    if isinstance(addr, ipaddress.IPv4Address) and _is_netmask(addr):
+        return
+    ref = Ref(byte_offset=byte_offset, length=len(addr_str), line=line)
+    ledger.intern_ipaddr(addr_str, ref)
 
 
 def _extract_ip_prefix(word: str) -> str | None:

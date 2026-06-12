@@ -150,7 +150,7 @@ def substitute(
                 if j > 0:
                     prev = tokens[i + j - 1]
                     out.append(src[prev.offset + prev.length : t.offset])
-                out.append(_emit_token(t, ledger, diagnostics))
+                out.append(_emit_token(t, ledger, diagnostics, qstring_render_map))
             rule_entry_depth = depth
             depth += 1
             last = tokens[i + 3]
@@ -179,7 +179,7 @@ def substitute(
             i += 1
             continue
         # ---- Default emit ----
-        out.append(_emit_token(tok, ledger, diagnostics))
+        out.append(_emit_token(tok, ledger, diagnostics, qstring_render_map))
         # Brace tracking AFTER emit so the closing RBRACE of an iRule
         # body has already been written before we clear rule_entry_depth.
         if tok.kind == TokKind.LBRACE:
@@ -196,7 +196,12 @@ def substitute(
     return "".join(out), diagnostics
 
 
-def _emit_token(tok: Token, ledger: Ledger, diagnostics: Diagnostics) -> str:
+def _emit_token(
+    tok: Token,
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+    infix_render_map: dict[str, list[tuple[str, str, str]]] | None = None,
+) -> str:
     if tok.kind == TokKind.WORD:
         # 1. Exact match — fast path for ordinary identifiers.
         for kind in Kind:
@@ -209,20 +214,25 @@ def _emit_token(tok: Token, ledger: Ledger, diagnostics: Diagnostics) -> str:
                 Ref(byte_offset=tok.offset, length=tok.length, line=tok.line),
             )
             return _render_placeholder(entry, ledger, tok)
-        # 2. Longest-prefix match with non-word boundary — covers
-        # member-port suffix tokens like ``/Common/10.0.0.1:80`` and
-        # IPv6 ``/Common/2001:db8::1.80`` / route-domain ``%rd0`` forms.
-        # Without this, those leak the literal path via substring.
-        prefix_hit = _find_longest_prefix_match(tok.value, ledger)
-        if prefix_hit is not None:
-            entry, prefix_len = prefix_hit
-            ledger.record_reference(
-                entry.placeholder,
-                Ref(byte_offset=tok.offset, length=prefix_len, line=tok.line),
+        # 2. v1.1 — Infix substring substitution subsumes the
+        # legacy prefix-with-suffix tier (member-port forms like
+        # ``/Common/10.0.0.1:80``, IPv6 ``/Common/2001:db8::1.80``,
+        # route-domain ``%rd0``) AND the new compound-bareword cases
+        # (``https://10.0.0.143/path``, IP ranges like
+        # ``10.0.0.1-10.0.0.50``). The substring walker is
+        # char-by-char with longest-match-first and word-boundary
+        # protection on both sides, so a single token can carry several
+        # independent substitutions (the range case) and the suffix
+        # after a prefix match also gets scanned. Partition references
+        # on infix hits are NOT recorded — non-Common partitions
+        # matched only as infix substring (rare in real configs) may
+        # orphan; documented gap.
+        if infix_render_map is not None:
+            substituted = _substitute_in_irule_qstring(
+                tok, infix_render_map, ledger,
             )
-            return (
-                _render_placeholder(entry, ledger, tok) + tok.value[prefix_len:]
-            )
+            if substituted != tok.value:
+                return substituted
         return tok.value
     if tok.kind == TokKind.QSTRING:
         _check_qstring_for_identifier(tok, ledger, diagnostics)
@@ -513,7 +523,7 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
                 out.append(
                     _reverse_emit_token(
                         t, reverse_map, qstring_reverse_map,
-                        comment_reverse_map,
+                        comment_reverse_map, qstring_substring_reverse_map,
                     )
                 )
             rule_entry_depth = depth
@@ -541,6 +551,7 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
         out.append(
             _reverse_emit_token(
                 tok, reverse_map, qstring_reverse_map, comment_reverse_map,
+                qstring_substring_reverse_map,
             )
         )
         if tok.kind == TokKind.LBRACE:
@@ -561,16 +572,24 @@ def _reverse_emit_token(
     reverse_map: dict[str, str],
     qstring_reverse_map: dict[str, str],
     comment_reverse_map: dict[str, str],
+    infix_reverse_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
     """Pure-function token-level reverse emit shared by the top-level
     reverse pass and the iRule-rule-header emission path."""
     if tok.kind == TokKind.WORD:
         if tok.value in reverse_map:
             return reverse_map[tok.value]
-        hit = _find_longest_reverse_prefix(tok.value, reverse_map)
-        if hit is not None:
-            prefix_len, original = hit
-            return original + tok.value[prefix_len:]
+        # v1.1 — infix substring reverse substitution subsumes the
+        # legacy longest-prefix-reverse tier. Handles the original
+        # suffix-after-prefix case (``/Common/POOL_0001:80`` →
+        # ``/Common/foo:80``) AND new compound cases like IP ranges
+        # (``203.0.113.1-203.0.113.50`` → ``10.0.0.1-10.0.0.50``).
+        if infix_reverse_map is not None:
+            substituted = _reverse_substitute_in_irule_qstring(
+                tok, infix_reverse_map,
+            )
+            if substituted != tok.value:
+                return substituted
         return tok.value
     if tok.kind == TokKind.QSTRING:
         # DESC_NNNN placeholders inside QSTRINGs (description bodies in
