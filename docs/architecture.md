@@ -1,12 +1,13 @@
 # f5-veil Architecture
 
-Status: v0.0.5 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+Status: v0.0.6 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
 pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
-CLI + leak detector with `--strict`. Object scope: pool, virtual,
-node, monitor, rule, partition, **LTM profile**; bare IPv4/IPv6
-literals; QSTRING and bareword descriptions; built-in TMOS profile
-names pass through literal as universal signal. Braced descriptions
-and full GTM/ASM/data-group coverage still pending.
+CLI + leak detector with `--strict`. Object scope: LTM pool / virtual
+/ node / monitor / rule / partition / profile, **GTM pool / wideip /
+server / datacenter**; bare IPv4/IPv6 literals; QSTRING and bareword
+descriptions; built-in TMOS profile names pass through literal as
+universal signal. Braced descriptions, gtm topology/region, and
+ASM/data-group/SNAT coverage still pending.
 
 ## Goal
 
@@ -125,6 +126,10 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `IPADDR` | `203.0.113.42` (rendered docs IP, not `IPADDR_NNNN`) | `10.0.0.42` |
 | `DESC` | `DESC_0001` (emitted inside the original wrapping: `"DESC_0001"` for QSTRING form, bare `DESC_0001` for bareword form) | `"customer prod pool"` |
 | `PROFILE` | `PROFILE_0001` | `/Tenant_A/my_custom_http_profile` (built-in `/Common/<name>` profiles like `/Common/http`, `/Common/clientssl` exempt as universal TMOS signal) |
+| `GTM_POOL` | `GTM_POOL_0001` | `/Common/dns_app_pool` (gtm pool a/aaaa/mx/...) |
+| `GTM_WIDEIP` | `GTM_WIDEIP_0001` | `/Common/www.customer.com` (gtm wideip a/aaaa/...) |
+| `GTM_SERVER` | `GTM_SERVER_0001` | `/Common/east_bigip` |
+| `GTM_DC` | `GTM_DC_0001` | `/Common/east_dc` (gtm datacenter) |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -356,6 +361,8 @@ src/veil/
 - **QSTRING + bareword description redaction** — landed in v0.0.4.
 - **LTM profile kind expansion** with factory built-in exemption —
   landed in v0.0.5.
+- **GTM family kinds** (gtm pool / wideip / server / datacenter) —
+  landed in v0.0.6. `gtm topology` / `gtm region` deferred to v0.0.7.
 - **Braced description form** — v0.0.5 follow-up (needs per-reference
   inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.

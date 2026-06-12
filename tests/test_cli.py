@@ -402,8 +402,11 @@ _LEAKY_CFG = (
     "ltm pool /Common/foo {\n"
     f"    custom_attribute {_LEAKY_TOKEN}\n"
     "}\n"
-    "gtm wideip a /Common/app {\n"
-    "    pools none\n"
+    # ``ltm snat`` is still unrecognised in v0.0.6 — fires
+    # ``unknown_top_level``. v0.0.5 added gtm wideip handling so the
+    # previous fixture stopped triggering the diagnostic.
+    "ltm snat /Common/customer_snat {\n"
+    "    origins { }\n"
     "}\n"
 )
 _CLEAN_CFG = "ltm pool /Common/foo {\n}\n"

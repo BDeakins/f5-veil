@@ -52,6 +52,15 @@ class Kind(str, Enum):
     # profile leaf names (``/Common/http``, ``/Common/tcp``, etc.) are
     # exempt and pass through literal — universal BIG-IP signal, not
     # customer identity. Custom profiles get ``PROFILE_NNNN``.
+    GTM_POOL = "GTM_POOL"  # ``gtm pool <subtype> /path { ... }`` — DNS
+    # load-balancing pool. Subtype indicates DNS record type (a, aaaa,
+    # mx, cname, naptr, ...) — preserved structurally, not in placeholder.
+    GTM_WIDEIP = "GTM_WIDEIP"  # ``gtm wideip <subtype> /path { ... }`` —
+    # wide IP / GSLB record. Leaf is typically a FQDN (the wide IP name).
+    GTM_SERVER = "GTM_SERVER"  # ``gtm server /path { ... }`` — GTM data
+    # source (BIG-IP, generic-host, etc.).
+    GTM_DC = "GTM_DC"  # ``gtm datacenter /path { ... }`` — physical /
+    # logical site grouping for GTM topology decisions.
 
 
 _RFC5737_NETWORKS = (

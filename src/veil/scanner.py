@@ -218,6 +218,8 @@ def _try_match_object(
     including the opening ``{``. Else 0."""
     if i + 3 >= len(tokens):
         return 0
+    if tokens[i].value == "gtm":
+        return _try_match_gtm_object(tokens, i, ledger, diagnostics)
     if tokens[i].value != "ltm":
         return 0
     second = tokens[i + 1].value
@@ -257,6 +259,60 @@ def _try_match_object(
         return 0
     _register(ledger, kind, path_tok, diagnostics)
     return 4
+
+
+_GTM_TWO_WORD_KINDS = MappingProxyType({
+    "server": Kind.GTM_SERVER,
+    "datacenter": Kind.GTM_DC,
+})
+_GTM_THREE_WORD_KINDS = MappingProxyType({
+    "pool": Kind.GTM_POOL,
+    "wideip": Kind.GTM_WIDEIP,
+})
+
+
+def _try_match_gtm_object(
+    tokens: list[Token],
+    i: int,
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+) -> int:
+    """Recognise GTM family headers and intern them. Returns tokens
+    consumed (including the opening ``{``) or 0 if no match.
+
+    Shapes handled:
+    - ``gtm pool <subtype> /path {``    — 5 tokens (GTM_POOL)
+    - ``gtm wideip <subtype> /path {``  — 5 tokens (GTM_WIDEIP)
+    - ``gtm server /path {``            — 4 tokens (GTM_SERVER)
+    - ``gtm datacenter /path {``        — 4 tokens (GTM_DC)
+
+    ``gtm topology`` / ``gtm region`` deferred to v0.0.7 — fall through
+    to the unknown-top-level path so callers still see a diagnostic.
+    """
+    second = tokens[i + 1].value
+    kind = _GTM_THREE_WORD_KINDS.get(second)
+    if kind is not None:
+        # gtm <pool|wideip> <subtype> /path {
+        if i + 4 >= len(tokens):
+            return 0
+        path_tok = tokens[i + 3]
+        lbrace = tokens[i + 4]
+        if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+            return 0
+        _register(ledger, kind, path_tok, diagnostics)
+        return 5
+    kind = _GTM_TWO_WORD_KINDS.get(second)
+    if kind is not None:
+        # gtm <server|datacenter> /path {
+        if i + 3 >= len(tokens):
+            return 0
+        path_tok = tokens[i + 2]
+        lbrace = tokens[i + 3]
+        if path_tok.kind != TokKind.WORD or lbrace.kind != TokKind.LBRACE:
+            return 0
+        _register(ledger, kind, path_tok, diagnostics)
+        return 4
+    return 0
 
 
 def _is_builtin_profile_path(path: str) -> bool:

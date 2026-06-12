@@ -154,7 +154,8 @@ _MAC_CISCO_RE = re.compile(
 # ----- Placeholder / bareword / path -------------------------------------
 
 _PLACEHOLDER_RE = re.compile(
-    r"^(?:POOL|VS|NODE|MON|IRULE|PARTITION|UNK|DESC|PROFILE)_\d{4,}$"
+    r"^(?:POOL|VS|NODE|MON|IRULE|PARTITION|UNK|DESC|PROFILE"
+    r"|GTM_POOL|GTM_WIDEIP|GTM_SERVER|GTM_DC)_\d{4,}$"
 )
 
 # TMSH bareword tokens that may appear unquoted in the body of any object.
