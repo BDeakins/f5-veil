@@ -103,9 +103,12 @@ def substitute(
         tok = tokens[i]
         if tok.offset > cursor:
             out.append(src[cursor:tok.offset])
-        # Description handling: emit value verbatim, log diagnostic.
+        # Description handling: substitute body with DESC_NNNN placeholder
+        # (QSTRING / bareword forms). Braced form deferred to v0.0.5.
         if tok.kind == TokKind.WORD and tok.value == "description":
-            consumed = _emit_description(tokens, i, src, out, diagnostics)
+            consumed = _emit_description(
+                tokens, i, src, out, ledger, diagnostics,
+            )
             last = tokens[i + consumed - 1]
             cursor = last.offset + last.length
             i += consumed
@@ -229,25 +232,47 @@ def _emit_description(
     i: int,
     src: str,
     out: list[str],
+    ledger: Ledger,
     diagnostics: Diagnostics,
 ) -> int:
-    """Emit the ``description`` keyword and its value verbatim. Logs an
-    unredacted_description diagnostic. Returns total tokens consumed
-    (including the description keyword)."""
+    """Emit the ``description`` keyword and substitute its value with a
+    ``DESC_NNNN`` placeholder. QSTRING and bareword forms are redacted
+    in place; braced form falls back to verbatim emit + the legacy
+    ``unredacted_description`` diagnostic (deferred to v0.0.5).
+
+    Returns total tokens consumed (including the description keyword).
+    """
     desc_tok = tokens[i]
-    diagnostics.unredacted_description.append((desc_tok.offset, desc_tok.line))
     out.append(desc_tok.value)
     if i + 1 >= len(tokens):
         return 1
     next_tok = tokens[i + 1]
     out.append(src[desc_tok.offset + desc_tok.length : next_tok.offset])
     if next_tok.kind == TokKind.QSTRING:
-        out.append(next_tok.value)
+        placeholder = ledger.by_original.get((Kind.DESC, next_tok.value))
+        if placeholder is not None:
+            entry = ledger.entries[placeholder]
+            ledger.record_reference(
+                placeholder,
+                Ref(
+                    byte_offset=next_tok.offset,
+                    length=next_tok.length,
+                    line=next_tok.line,
+                ),
+            )
+            out.append(f'"{entry.placeholder}"')
+        else:
+            # Empty body or otherwise not interned — leave verbatim. No
+            # leak (empty body has nothing to redact) and no diagnostic.
+            out.append(next_tok.value)
         return 2
     if next_tok.kind == TokKind.LBRACE:
-        # description { brace-quoted body } — emit through matching RBRACE
-        # without invoking _emit_token, so no ledger substitution happens
-        # inside the description body.
+        # Braced form — deferred to v0.0.5. Keep legacy verbatim emit
+        # and surface ``unredacted_description`` so callers still
+        # fail-closed on non-empty braced descriptions.
+        diagnostics.unredacted_description.append(
+            (desc_tok.offset, desc_tok.line)
+        )
         out.append(next_tok.value)
         depth = 1
         j = i + 2
@@ -265,10 +290,20 @@ def _emit_description(
             j += 1
         return j - i
     if next_tok.kind == TokKind.WORD:
-        # description <bareword> — single-word description; emit verbatim
-        # rather than risk substituting a path-shaped value inside a
-        # description we're already passing through.
-        out.append(next_tok.value)
+        placeholder = ledger.by_original.get((Kind.DESC, next_tok.value))
+        if placeholder is not None:
+            entry = ledger.entries[placeholder]
+            ledger.record_reference(
+                placeholder,
+                Ref(
+                    byte_offset=next_tok.offset,
+                    length=next_tok.length,
+                    line=next_tok.line,
+                ),
+            )
+            out.append(entry.placeholder)
+        else:
+            out.append(next_tok.value)
         return 2
     return 1
 
@@ -304,6 +339,7 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
     ``/Common/10.0.0.1:80`` cleanly.
     """
     reverse_map = _build_reverse_map(ledger)
+    qstring_reverse_map = _build_qstring_reverse_map(ledger)
     tokens = list(tokenize(sanitized))
     out: list[str] = []
     cursor = 0
@@ -320,6 +356,15 @@ def reverse_substitute(sanitized: str, ledger: Ledger) -> str:
                     out.append(original + tok.value[prefix_len:])
                 else:
                     out.append(tok.value)
+        elif tok.kind == TokKind.QSTRING:
+            # DESC_NNNN placeholders inside QSTRINGs (description bodies
+            # in QSTRING form). Key includes the quotes; the value is
+            # the original QSTRING token (also quoted), so the wrapping
+            # restores byte-exactly.
+            if tok.value in qstring_reverse_map:
+                out.append(qstring_reverse_map[tok.value])
+            else:
+                out.append(tok.value)
         else:
             out.append(tok.value)
         cursor = tok.offset + tok.length
@@ -351,6 +396,27 @@ def _find_longest_reverse_prefix(
     return best_len, best_original
 
 
+def _build_qstring_reverse_map(ledger: Ledger) -> dict[str, str]:
+    """Map quoted-placeholder QSTRING values back to their original
+    quoted form, for description redaction in QSTRING form.
+
+    Key: the quoted placeholder as it appears in the sanitized output
+    (e.g. ``'"DESC_0001"'``).
+    Value: the original quoted QSTRING (e.g. ``'"primary cluster"'``).
+
+    DESC entries whose ``original`` does not begin with ``"`` are
+    bareword form and handled by the standard WORD reverse map; skip
+    them here."""
+    rmap: dict[str, str] = {}
+    for entry in ledger.entries.values():
+        if entry.kind != Kind.DESC:
+            continue
+        if not entry.original.startswith('"'):
+            continue
+        rmap[f'"{entry.placeholder}"'] = entry.original
+    return rmap
+
+
 def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
     """Build the rendered-placeholder -> original lookup table.
 
@@ -365,6 +431,10 @@ def _build_reverse_map(ledger: Ledger) -> dict[str, str]:
     """
     rmap: dict[str, str] = {}
     for entry in ledger.entries.values():
+        # QSTRING-form DESC entries are routed through the qstring
+        # reverse map; skip here to avoid spurious WORD-level matches.
+        if entry.kind == Kind.DESC and entry.original.startswith('"'):
+            continue
         if entry.kind == Kind.PARTITION:
             rmap[entry.placeholder] = entry.original
         elif entry.partition is None:

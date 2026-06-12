@@ -391,15 +391,19 @@ def test_deobfuscate_requires_input_and_answer_file(capsys):
 # ----- leak detector / --strict ---------------------------------------
 
 
-# A config whose ``description`` value contains a leaky internal IP. The
-# description body passes through pass-2 verbatim and surfaces as an
-# ``unredacted_description`` diagnostic, so callers need --allow-incomplete
-# to reach the leak-detector phase. This is exactly the use case --strict
-# is designed for: the operator opted into incompleteness but still wants a
-# substitution-survivor gate.
+# A config that fires BOTH the leak detector (identifier-shaped bareword)
+# and the diagnostics fail-closed gate (gtm wideip is an unknown top-level
+# block). Lets us exercise --strict and --allow-incomplete interactions.
+# Pre-v0.0.4 this fixture used a description with an embedded IP, but
+# v0.0.4 description redaction now scrubs both — needed a leak source the
+# obfuscator can't handle.
+_LEAKY_TOKEN = "widget_app_v2_pool"
 _LEAKY_CFG = (
     "ltm pool /Common/foo {\n"
-    '    description "primary node at 10.0.0.42"\n'
+    f"    custom_attribute {_LEAKY_TOKEN}\n"
+    "}\n"
+    "gtm wideip a /Common/app {\n"
+    "    pools none\n"
     "}\n"
 )
 _CLEAN_CFG = "ltm pool /Common/foo {\n}\n"
@@ -447,7 +451,7 @@ def test_obfuscate_strict_with_leaks_returns_5_writes_nothing(
     assert not sanitized.exists()
     captured = capsys.readouterr()
     assert "leak detector" in captured.err.lower()
-    assert "10.0.0.42" in captured.err
+    assert _LEAKY_TOKEN in captured.err
 
 
 def test_obfuscate_default_with_leaks_warns_and_proceeds(
@@ -490,7 +494,7 @@ def test_obfuscate_dry_run_reports_leaks(tmp_path, monkeypatch, capsys):
     assert code == EXIT_OK
     captured = capsys.readouterr()
     assert "leak detector" in captured.err.lower()
-    assert "10.0.0.42" in captured.err
+    assert _LEAKY_TOKEN in captured.err
 
 
 def test_obfuscate_dry_run_clean_input_reports_clean(

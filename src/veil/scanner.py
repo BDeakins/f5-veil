@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
+from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
 from .ip_discovery import discover_ip_literals
 from .ledger import Kind, Ledger, Ref
@@ -101,6 +102,10 @@ def scan(
     # in body context (``address 10.0.0.42``, ``destination 10.0.0.1:80``,
     # etc.). Must run before freeze.
     discover_ip_literals(src, ledger, diagnostics)
+    # Pass 1.7 — description body redaction. Walks tokens looking for
+    # the ``description`` keyword and its value; interns the value so
+    # pass-2 can substitute it with a ``DESC_NNNN`` placeholder.
+    discover_descriptions(src, ledger, diagnostics)
     return ledger, diagnostics
 
 

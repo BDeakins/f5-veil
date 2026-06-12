@@ -1,11 +1,11 @@
 # f5-veil Architecture
 
-Status: v0.0.3 — pass-1 scanner + pass-1.5 IP discovery + pass-2
-substitution + AES-256-GCM answer file + `veil obfuscate` /
-`veil deobfuscate` CLI + post-substitution leak detector with `--strict`.
-Tracer-bullet object scope (pool, virtual, node, monitor, rule, partition)
-plus bare IPv4/IPv6 literals in body context. Description redaction and
-full GTM/profile/ASM coverage still pending.
+Status: v0.0.4 — pass-1 + pass-1.5 (IP) + pass-1.7 (description) +
+pass-2 substitution + AES-256-GCM answer file + obfuscate/deobfuscate
+CLI + leak detector with `--strict`. Tracer-bullet object scope (pool,
+virtual, node, monitor, rule, partition), bare IPv4/IPv6 literals,
+QSTRING and bareword descriptions. Braced descriptions and full
+GTM/profile/ASM coverage still pending.
 
 ## Goal
 
@@ -38,6 +38,26 @@ embedded inside `scan()` and is invisible to callers):
 5. Freeze the ledger via `Ledger.freeze()`. Once frozen, no new
    placeholders can be minted — the answer file persisted from this
    state is authoritative for pass 2 and for deobfuscation.
+
+### Pass 1.7 — description redaction (`veil.description_discovery.discover_descriptions`)
+
+Called by `scan()` immediately after pass 1.5 and before
+`ledger.freeze()`. Walks the token stream looking for the
+`description` keyword followed by:
+
+- A QSTRING — interned as `Kind.DESC` with the full quoted token as
+  `original` (so reverse restores the exact quoted byte sequence).
+  Pass-2 emits `"DESC_NNNN"` in its place.
+- A bareword WORD — interned similarly. Pass-2 emits `DESC_NNNN`.
+- An LBRACE (braced form) — deferred to v0.0.5; pass-2 falls back to
+  the legacy verbatim emit + `unredacted_description` diagnostic.
+
+Empty descriptions (`description ""`) are skipped — nothing to redact,
+no diagnostic fires.
+
+Dedup is by the full original token (including wrapping). Same
+substantive text in different wrappings yields distinct placeholders so
+each reverse path can restore byte-exactly.
 
 ### Pass 1.5 — IP-literal discovery (`veil.ip_discovery.discover_ip_literals`)
 
@@ -102,6 +122,7 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `IRULE` | `IRULE_0001` | `/Common/my_redirect_rule` |
 | `PARTITION` | `PARTITION_0001` | `Tenant_A` (note: `Common` is exempt) |
 | `IPADDR` | `203.0.113.42` (rendered docs IP, not `IPADDR_NNNN`) | `10.0.0.42` |
+| `DESC` | `DESC_0001` (emitted inside the original wrapping: `"DESC_0001"` for QSTRING form, bare `DESC_0001` for bareword form) | `"customer prod pool"` |
 
 Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
 `WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
@@ -286,6 +307,9 @@ src/veil/
                      (drives pass 1 + invokes pass 1.5 before freeze)
   ip_discovery.py    discover_ip_literals(src, ledger, diag)
                      (pass 1.5 — bare IP literal interning)
+  description_discovery.py
+                     discover_descriptions(src, ledger, diag)
+                     (pass 1.7 — QSTRING / bareword description redaction)
   substitute.py      substitute(src, ledger, diag), reverse_substitute(...)
   answer_file.py     write_answer_file(...), read_answer_file(...),
                      AnswerFileError
@@ -327,6 +351,9 @@ src/veil/
 - **CLI wiring + answer file** — landed in v0.0.1.
 - **Leak detector + `--strict`** — landed in v0.0.2.
 - **Bare IP literal substitution in body context** — landed in v0.0.3.
+- **QSTRING + bareword description redaction** — landed in v0.0.4.
+- **Braced description form** — v0.0.5 follow-up (needs per-reference
+  inner-brace whitespace metadata for byte-exact round-trip).
 - **Bracketed IPv6 form `[fc00::1]:80`** — v0.0.4 follow-up.
 - **Larger IPv4 docs pool** for configs exceeding the RFC 5737 768-host
   cap — v0.0.4 follow-up.

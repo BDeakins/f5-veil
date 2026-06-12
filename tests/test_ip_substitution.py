@@ -170,11 +170,11 @@ def test_ipv6_ula_clean_after_substitution():
     assert ula == []
 
 
-def test_description_embedded_ip_passes_through_verbatim():
-    """IPs inside ``description`` values are out of v0.0.3 scope. The
-    description body emits verbatim (always firing the
-    ``unredacted_description`` diagnostic, regardless of content). The
-    bare WORD-context IP elsewhere in the same config IS substituted."""
+def test_description_embedded_ip_redacted_in_v004():
+    """v0.0.4: QSTRING descriptions are redacted via DESC_NNNN. The IP
+    inside the description body is no longer in sanitized output —
+    aggressive description redaction subsumes the IP-substitution
+    concern for description-embedded IPs."""
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.42\n"
@@ -185,14 +185,10 @@ def test_description_embedded_ip_passes_through_verbatim():
     )
     ledger, diag = scan(src)
     sanitized, diag = substitute(src, ledger, diag)
-    # The WORD-context 10.0.0.42 was substituted, but the description
-    # body emits verbatim — bare 10.0.0.42 still present.
-    assert "10.0.0.42" in sanitized
-    # And the description diagnostic fires (covers all description bodies
-    # regardless of IP content; aggressive DESC_NNNN redaction deferred).
-    assert diag.unredacted_description, (
-        "expected unredacted_description to fire for the description body"
-    )
+    assert "10.0.0.42" not in sanitized
+    assert '"DESC_0001"' in sanitized
+    # No more unredacted_description; QSTRING form is fully handled.
+    assert diag.unredacted_description == []
 
 
 def test_bare_qstring_with_ip_fires_qstring_diagnostic():

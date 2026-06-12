@@ -41,6 +41,11 @@ class Kind(str, Enum):
     # RFC 3849 (v6) docs-range address rather than ``IPADDR_NNNN``. This
     # lets AI tools reason about IP-shaped values normally while keeping
     # the round-trip mapping inside the encrypted answer file.
+    DESC = "DESC"  # description bodies redacted in pass 1.7. Dedup is by
+    # (form, full_token_text) — same QSTRING body content always gets the
+    # same ``DESC_NNNN``; mixing QSTRING and bareword forms for the same
+    # text yields distinct placeholders so the reverse path can restore
+    # the original wrapping. Braced form is deferred to v0.0.5.
 
 
 _RFC5737_NETWORKS = (

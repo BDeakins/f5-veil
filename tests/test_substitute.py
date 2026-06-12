@@ -77,15 +77,19 @@ def test_partition_gets_a_reference_recorded_for_every_path_render():
     assert len(part_entry.references) == 3
 
 
-def test_quoted_description_logs_diagnostic_and_passes_through():
+def test_quoted_description_redacted_to_placeholder():
+    # v0.0.4: QSTRING-form descriptions are now redacted to DESC_NNNN
+    # placeholders. The body no longer survives in sanitized output and
+    # the legacy ``unredacted_description`` diagnostic no longer fires.
     src = (
         "ltm pool /Common/foo {\n"
         '    description "customer prod pool"\n'
         "}\n"
     )
     sanitized, diag = _scan_and_substitute(src)
-    assert '"customer prod pool"' in sanitized
-    assert len(diag.unredacted_description) == 1
+    assert '"customer prod pool"' not in sanitized
+    assert '"DESC_0001"' in sanitized
+    assert diag.unredacted_description == []
 
 
 def test_brace_description_logs_diagnostic_and_passes_through():
