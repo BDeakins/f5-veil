@@ -38,6 +38,7 @@ from .fqdn_discovery import discover_fqdns
 from .ip_discovery import discover_ip_literals
 from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
+from .remote_role_discovery import discover_remote_roles
 from .tokenizer import Token, TokKind, tokenize
 
 _TWO_WORD_KINDS = MappingProxyType({
@@ -153,6 +154,12 @@ def scan(
     # (v0.0.11). Top-level comments (e.g. ``#TMSH-VERSION:``) are NOT
     # discovered — they are universal BIG-IP signal.
     discover_irule_comments(src, ledger, diagnostics)
+    # Pass 1.85 — ``auth remote-role role-info`` bucket-path discovery
+    # (v1.2). The customer-defined role bucket names
+    # (``/Common/F5_Admins``, ``/Common/Domain_Admins``, etc.) live
+    # inside an unknown-top-level body that pass-1's main loop skips.
+    # Without this pass they survive into sanitized output.
+    discover_remote_roles(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

@@ -120,6 +120,16 @@ class Kind(str, Enum):
     # have no legitimate probe-payload use case and customer AD domain
     # names are unambiguously identifying. Bare-placeholder render
     # (``AD_GROUP_DN_NNNN``); reverse map restores byte-exact.
+    REMOTE_ROLE = "REMOTE_ROLE"  # Customer-defined role bucket paths
+    # discovered inside an ``auth remote-role { role-info { ... } }``
+    # body by pass-1.85 (v1.2). Pre-v1.2 these leaked verbatim because
+    # ``auth remote-role`` lands in ``_record_unknown_top_level`` and
+    # pass-1 doesn't descend into unknown bodies. ``original`` stores
+    # the full path (``/Common/F5_Admins``). Path-shaped substitution
+    # via pass-2's WORD-token full-match path (same model as
+    # ``Kind.PROFILE`` etc.) — bucket leaf renders as
+    # ``/Common/REMOTE_ROLE_NNNN``; non-Common partitions get the
+    # usual ``PARTITION_NNNN`` treatment.
 
 
 _RFC5737_NETWORKS = (
