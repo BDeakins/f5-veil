@@ -31,7 +31,7 @@ from .answer_file import AnswerFileError, read_answer_file, write_answer_file
 from .diagnostics import Diagnostics
 from .leak_detector import LeakReport, scan_leaks
 from .ledger import Ledger
-from .scanner import scan
+from .scanner import scan, scan_many
 from .substitute import reverse_substitute, substitute
 
 
@@ -65,14 +65,29 @@ def _build_parser() -> argparse.ArgumentParser:
 
     obf = sub.add_parser("obfuscate", help="Obfuscate a bigip.conf")
     obf.add_argument(
-        "--input", required=True,
-        help="Path to bigip.conf (use '-' for stdin)",
+        "--input", required=True, action="append", metavar="PATH",
+        help=(
+            "Path to a BIG-IP config file (use '-' for stdin, single-"
+            "file mode only). Repeat for multi-file mode (e.g. "
+            "``--input bigip_base.conf --input bigip.conf``); base "
+            "file goes first so its objects are in the ledger before "
+            "main-file references resolve."
+        ),
     )
     obf.add_argument(
         "--output",
         help=(
-            "Sanitized output path (default: derived from --input; "
-            "use '-' for stdout)"
+            "Sanitized output path for single-file mode (default: "
+            "derived from --input; use '-' for stdout). Not valid in "
+            "multi-file mode — use --output-dir."
+        ),
+    )
+    obf.add_argument(
+        "--output-dir",
+        help=(
+            "Output directory for multi-file mode. Each sanitized "
+            "file is written to <dir>/<basename>. Not valid in single-"
+            "file mode — use --output."
         ),
     )
     obf.add_argument(
@@ -118,14 +133,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "deobfuscate", help="Deobfuscate a sanitized config"
     )
     deobf.add_argument(
-        "--input", required=True,
-        help="Path to sanitized config (use '-' for stdin)",
+        "--input", required=True, action="append", metavar="PATH",
+        help=(
+            "Path to a sanitized config file (use '-' for stdin, "
+            "single-file mode only). Repeat for multi-file mode; the "
+            "filenames (basenames) must match the ``sources`` recorded "
+            "in the answer file at obfuscation time."
+        ),
     )
     deobf.add_argument(
         "--output",
         help=(
-            "Restored output path (default: derived from --input; "
-            "use '-' for stdout)"
+            "Restored output path for single-file mode (default: "
+            "derived from --input; use '-' for stdout). Not valid in "
+            "multi-file mode — use --output-dir."
+        ),
+    )
+    deobf.add_argument(
+        "--output-dir",
+        help=(
+            "Output directory for multi-file mode. Each restored file "
+            "is written to <dir>/<basename>."
         ),
     )
     deobf.add_argument(
@@ -154,17 +182,49 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_obfuscate(args: argparse.Namespace) -> int:
+    input_args: list[str] = args.input
+    multi = len(input_args) > 1
+
+    # Validate input/output flag combinations before doing any work.
+    err = _validate_obfuscate_output_flags(args, multi, input_args)
+    if err is not None:
+        return err
+
+    # Read all inputs. Each entry is (label, content) where ``label``
+    # is the original CLI argument (preserved for path-derivation and
+    # error messages); the answer file gets the basenames only.
     try:
-        src = _read_input(args.input)
+        sources_data = [(arg, _read_input(arg)) for arg in input_args]
     except OSError as exc:
         _err(f"could not read input: {exc!s}")
         return EXIT_IO_ERROR
 
-    ledger, diag = scan(src)
-    sanitized, diag = substitute(src, ledger, diag)
+    if multi:
+        # ``scan_many`` shares the ledger across files; base file goes
+        # first by convention so its objects are registered before
+        # main-file references resolve.
+        ledger, diag = scan_many(
+            [(_label_for_answer_file(label), content)
+             for label, content in sources_data]
+        )
+    else:
+        ledger, diag = scan(sources_data[0][1])
+
+    # Pass-2 per file against the merged ledger. The ``diag`` object
+    # accumulates across calls (orphan-entry detection, etc.).
+    sanitized_per_file: list[tuple[str, str]] = []
+    for label, content in sources_data:
+        san, diag = substitute(content, ledger, diag)
+        sanitized_per_file.append((label, san))
+
+    # Diagnostics and leak detection. Leak detector runs over the
+    # concatenation so any cross-file leak surfaces; counts are
+    # aggregated which is what the operator wants for fail-closed
+    # decisions.
     diag_report = _diagnostics_summary(diag)
     warnings_report = _diagnostics_warnings_summary(diag)
-    leak_report = scan_leaks(sanitized)
+    combined_sanitized = "\n".join(s for _, s in sanitized_per_file)
+    leak_report = scan_leaks(combined_sanitized)
 
     if args.dry_run:
         _err(_dry_run_summary(ledger, diag, leak_report))
@@ -202,7 +262,18 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
         return EXIT_USER_ERROR
 
     answer_path = Path(args.answer_file)
-    output_arg = args.output or _derive_obfuscate_output(args.input)
+
+    # Resolve output paths. Single-file uses ``--output`` (or derives
+    # from the input); multi-file lays each sanitized file into
+    # ``--output-dir`` keyed by basename.
+    if multi:
+        out_dir = Path(args.output_dir)
+        output_paths = [
+            str(out_dir / Path(label).name)
+            for label, _ in sources_data
+        ]
+    else:
+        output_paths = [args.output or _derive_obfuscate_output(input_args[0])]
 
     if not args.force:
         if answer_path.exists():
@@ -211,12 +282,13 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
                 f"Use --force to overwrite."
             )
             return EXIT_USER_ERROR
-        if output_arg != "-" and Path(output_arg).exists():
-            _err(
-                f"--output already exists: {output_arg}. "
-                f"Use --force to overwrite."
-            )
-            return EXIT_USER_ERROR
+        for out in output_paths:
+            if out != "-" and Path(out).exists():
+                _err(
+                    f"output already exists: {out}. "
+                    f"Use --force to overwrite."
+                )
+                return EXIT_USER_ERROR
 
     try:
         passphrase = _get_passphrase(args.passphrase_file, confirm=True)
@@ -231,26 +303,74 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
         return EXIT_IO_ERROR
 
     # Crash safety: answer file BEFORE sanitized output (locked).
+    # Multi-file mode records the basenames so deobfuscate can verify
+    # the operator is feeding in the matching set.
+    answer_sources = (
+        [_label_for_answer_file(label) for label, _ in sources_data]
+        if multi else None
+    )
     try:
-        write_answer_file(answer_path, ledger, passphrase, diagnostics=diag)
+        write_answer_file(
+            answer_path, ledger, passphrase,
+            diagnostics=diag, sources=answer_sources,
+        )
     except AnswerFileError as exc:
         _err(f"writing answer file: {exc!s}")
         return EXIT_IO_ERROR
 
+    if multi:
+        try:
+            Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _err(f"could not create --output-dir: {exc!s}")
+            return EXIT_IO_ERROR
+
     try:
-        _write_output(output_arg, sanitized)
+        for (_, san), out in zip(sanitized_per_file, output_paths):
+            _write_output(out, san)
     except OSError as exc:
         _err(f"writing sanitized output: {exc!s}")
         return EXIT_IO_ERROR
 
     _err(
         f"obfuscated {len(ledger)} identifiers "
-        f"across {len(ledger.counters)} kinds"
+        f"across {len(ledger.counters)} kinds "
+        f"({len(sources_data)} file(s))"
     )
     _err(f"answer file: {answer_path}")
-    if output_arg != "-":
-        _err(f"sanitized:   {output_arg}")
+    for out in output_paths:
+        if out != "-":
+            _err(f"sanitized:   {out}")
     return EXIT_OK
+
+
+def _validate_obfuscate_output_flags(
+    args: argparse.Namespace, multi: bool, input_args: list[str]
+) -> int | None:
+    """Cross-flag validation for obfuscate output options. Returns an
+    exit code on error, ``None`` if everything's fine."""
+    if multi:
+        if args.output:
+            _err("--output not valid in multi-file mode; use --output-dir")
+            return EXIT_USER_ERROR
+        if not args.output_dir and not args.dry_run:
+            _err("--output-dir is required in multi-file mode")
+            return EXIT_USER_ERROR
+        if "-" in input_args:
+            _err("stdin ('-') not supported in multi-file mode")
+            return EXIT_USER_ERROR
+    else:
+        if args.output_dir:
+            _err("--output-dir not valid in single-file mode; use --output")
+            return EXIT_USER_ERROR
+    return None
+
+
+def _label_for_answer_file(input_arg: str) -> str:
+    """Basename used as the per-file label in the answer-file
+    ``sources`` list. Strips directory components so the answer file
+    doesn't bake in the operator's working-directory layout."""
+    return Path(input_arg).name
 
 
 # ---------------------------------------------------------------------
@@ -259,8 +379,27 @@ def _cmd_obfuscate(args: argparse.Namespace) -> int:
 
 
 def _cmd_deobfuscate(args: argparse.Namespace) -> int:
+    input_args: list[str] = args.input
+    multi = len(input_args) > 1
+
+    # Cross-flag validation mirrors the obfuscate side.
+    if multi:
+        if args.output:
+            _err("--output not valid in multi-file mode; use --output-dir")
+            return EXIT_USER_ERROR
+        if not args.output_dir:
+            _err("--output-dir is required in multi-file mode")
+            return EXIT_USER_ERROR
+        if "-" in input_args:
+            _err("stdin ('-') not supported in multi-file mode")
+            return EXIT_USER_ERROR
+    else:
+        if args.output_dir:
+            _err("--output-dir not valid in single-file mode; use --output")
+            return EXIT_USER_ERROR
+
     try:
-        sanitized = _read_input(args.input)
+        sanitized_inputs = [(arg, _read_input(arg)) for arg in input_args]
     except OSError as exc:
         _err(f"could not read input: {exc!s}")
         return EXIT_IO_ERROR
@@ -278,7 +417,9 @@ def _cmd_deobfuscate(args: argparse.Namespace) -> int:
         return EXIT_IO_ERROR
 
     try:
-        ledger, _diag = read_answer_file(args.answer_file, passphrase)
+        ledger, _diag, recorded_sources = read_answer_file(
+            args.answer_file, passphrase
+        )
     except AnswerFileError as exc:
         if "decryption failed" in str(exc):
             _err(f"{exc!s} (wrong passphrase or tampered file)")
@@ -286,29 +427,62 @@ def _cmd_deobfuscate(args: argparse.Namespace) -> int:
         _err(f"{exc!s}")
         return EXIT_IO_ERROR
 
-    restored = reverse_substitute(sanitized, ledger)
+    # If the answer file recorded a sources list (v1.2 multi-file),
+    # require the operator to supply the matching set of inputs.
+    # The basenames must match exactly and in the same order — order
+    # carries semantic weight at obfuscation time (base file first), so
+    # reusing the ledger against the wrong order is an operator error.
+    if recorded_sources is not None:
+        provided = [_label_for_answer_file(p) for p in input_args]
+        if provided != recorded_sources:
+            _err(
+                "input filenames do not match the answer file's "
+                f"recorded sources. Expected (in order): "
+                f"{recorded_sources!r}; got: {provided!r}"
+            )
+            return EXIT_USER_ERROR
 
-    output_arg = args.output or _derive_deobfuscate_output(args.input)
-    if (
-        not args.force
-        and output_arg != "-"
-        and Path(output_arg).exists()
-    ):
-        _err(
-            f"--output already exists: {output_arg}. "
-            f"Use --force to overwrite."
-        )
-        return EXIT_USER_ERROR
+    # Resolve output paths.
+    if multi:
+        out_dir = Path(args.output_dir)
+        output_paths = [
+            str(out_dir / Path(label).name)
+            for label, _ in sanitized_inputs
+        ]
+    else:
+        output_paths = [args.output or _derive_deobfuscate_output(input_args[0])]
+
+    if not args.force:
+        for out in output_paths:
+            if out != "-" and Path(out).exists():
+                _err(
+                    f"output already exists: {out}. "
+                    f"Use --force to overwrite."
+                )
+                return EXIT_USER_ERROR
+
+    if multi:
+        try:
+            Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _err(f"could not create --output-dir: {exc!s}")
+            return EXIT_IO_ERROR
 
     try:
-        _write_output(output_arg, restored)
+        for (_, sanitized), out in zip(sanitized_inputs, output_paths):
+            restored = reverse_substitute(sanitized, ledger)
+            _write_output(out, restored)
     except OSError as exc:
         _err(f"writing restored output: {exc!s}")
         return EXIT_IO_ERROR
 
-    _err(f"deobfuscated using {len(ledger)} ledger entries")
-    if output_arg != "-":
-        _err(f"restored: {output_arg}")
+    _err(
+        f"deobfuscated using {len(ledger)} ledger entries "
+        f"({len(sanitized_inputs)} file(s))"
+    )
+    for out in output_paths:
+        if out != "-":
+            _err(f"restored: {out}")
     return EXIT_OK
 
 

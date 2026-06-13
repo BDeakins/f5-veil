@@ -174,6 +174,44 @@ def scan(
     return ledger, diagnostics
 
 
+def scan_many(
+    sources: list[tuple[str, str]],
+    ledger: Ledger | None = None,
+    diagnostics: Diagnostics | None = None,
+) -> tuple[Ledger, Diagnostics]:
+    """Pass 1 across multiple source files sharing one ledger.
+
+    ``sources`` is a list of ``(filename, content)`` pairs. Each pair is
+    processed in order via :func:`scan` with the shared ledger forwarded
+    between calls. Order matters: typical use is
+    ``[("bigip_base.conf", base_src), ("bigip.conf", main_src)]`` so the
+    base file's partitions / VLANs / self-IPs are registered before the
+    main file's references to them are resolved.
+
+    The shared ledger is what makes cross-file references work — when
+    ``bigip.conf`` mentions ``vlan-name`` defined in ``bigip_base.conf``,
+    the v1.1 BAREWORD infix substring substitution machinery substitutes
+    the reference because the bareword is in the ledger.
+
+    Returns the same ``(ledger, diagnostics)`` shape as :func:`scan`.
+    Per-file substitution (pass 2) is the caller's responsibility — call
+    :func:`veil.substitute.substitute` once per source file against the
+    returned shared ledger.
+
+    ``filename`` is stored only at the call-site level (the caller uses
+    it to label outputs and to populate the answer-file ``sources``
+    list); the scanner itself doesn't propagate filenames into ledger
+    state.
+    """
+    if ledger is None:
+        ledger = Ledger()
+    if diagnostics is None:
+        diagnostics = Diagnostics()
+    for _filename, src in sources:
+        scan(src, ledger=ledger, diagnostics=diagnostics)
+    return ledger, diagnostics
+
+
 def _record_unknown_top_level(
     tokens: list[Token],
     i: int,

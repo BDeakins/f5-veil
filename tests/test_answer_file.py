@@ -33,7 +33,7 @@ def test_round_trip_recovers_all_ledger_entries():
         write_answer_file(
             path, ledger, "correct horse battery staple", diagnostics=diag
         )
-        loaded_ledger, _ = read_answer_file(
+        loaded_ledger, _, _ = read_answer_file(
             path, "correct horse battery staple"
         )
         assert set(loaded_ledger.entries.keys()) == set(ledger.entries.keys())
@@ -58,7 +58,7 @@ def test_round_trip_recovers_all_diagnostic_fields():
         diag.qstring_contains_identifier.append(("POOL_0001", 200, 11))
         diag.orphan_entries.append("VS_9999")
         write_answer_file(path, ledger, "passphrase", diagnostics=diag)
-        _, loaded_diag = read_answer_file(path, "passphrase")
+        _, loaded_diag, _ = read_answer_file(path, "passphrase")
         assert ("gtm wideip", 42) in loaded_diag.unknown_top_level
         assert ("POOL", "/Common/", 5) in loaded_diag.malformed_paths
         assert (100, 7) in loaded_diag.unredacted_description
@@ -160,8 +160,8 @@ def test_passphrase_accepts_both_bytes_and_str():
         path = Path(td) / "answers.enc"
         ledger, diag = _sample_ledger_and_diag()
         write_answer_file(path, ledger, "passphrase", diagnostics=diag)
-        loaded1, _ = read_answer_file(path, "passphrase")
-        loaded2, _ = read_answer_file(path, b"passphrase")
+        loaded1, _, _ = read_answer_file(path, "passphrase")
+        loaded2, _, _ = read_answer_file(path, b"passphrase")
         assert set(loaded1.entries) == set(loaded2.entries)
 
 
@@ -171,7 +171,7 @@ def test_atomic_write_replaces_existing_file_cleanly():
         path.write_bytes(b"existing garbage")
         ledger, diag = _sample_ledger_and_diag()
         write_answer_file(path, ledger, "passphrase", diagnostics=diag)
-        loaded, _ = read_answer_file(path, "passphrase")
+        loaded, _, _ = read_answer_file(path, "passphrase")
         assert "POOL_0001" in loaded.entries
         # tmp file is cleaned up
         assert not (Path(td) / "answers.enc.tmp").exists()
@@ -222,7 +222,7 @@ def test_writing_with_no_diagnostics_uses_empty_default():
         path = Path(td) / "answers.enc"
         ledger, _ = _sample_ledger_and_diag()
         write_answer_file(path, ledger, "passphrase")  # no diagnostics=
-        _, loaded_diag = read_answer_file(path, "passphrase")
+        _, loaded_diag, _ = read_answer_file(path, "passphrase")
         assert loaded_diag.unknown_top_level == []
         assert loaded_diag.orphan_entries == []
 
@@ -246,6 +246,54 @@ def test_envelope_is_deterministic_modulo_random_salt_and_nonce():
         assert env1["kdf"]["algorithm"] == env2["kdf"]["algorithm"]
         assert env1["encryption"]["algorithm"] == env2["encryption"]["algorithm"]
         assert env1["kdf"]["n"] == env2["kdf"]["n"]
+
+
+def test_sources_round_trip_when_set():
+    """v1.2 multi-file mode: the ``sources`` list of input filenames
+    round-trips through write/read."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "answers.enc"
+        ledger, diag = _sample_ledger_and_diag()
+        write_answer_file(
+            path, ledger, "passphrase",
+            diagnostics=diag,
+            sources=["bigip_base.conf", "bigip.conf"],
+        )
+        _, _, loaded_sources = read_answer_file(path, "passphrase")
+        assert loaded_sources == ["bigip_base.conf", "bigip.conf"]
+
+
+def test_sources_absent_returns_none():
+    """Single-file mode (the default and the v1.0/v1.1 behavior) omits
+    the ``sources`` field; the reader returns ``None``."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "answers.enc"
+        ledger, diag = _sample_ledger_and_diag()
+        write_answer_file(path, ledger, "passphrase", diagnostics=diag)
+        _, _, loaded_sources = read_answer_file(path, "passphrase")
+        assert loaded_sources is None
+        # And the envelope plaintext must not have a ``sources`` key
+        # (would surface in audit grep against the encrypted file).
+        envelope = json.loads(path.read_text())
+        assert "sources" not in envelope  # not in envelope either way
+        # We can't easily inspect the plaintext without the passphrase
+        # in this test; absence-via-reader is the contract that matters.
+
+
+def test_sources_empty_list_round_trips_as_empty_list():
+    """An empty ``sources=[]`` is distinct from ``sources=None``: it
+    records "this was multi-file mode but with zero input files," which
+    is degenerate but not the same as the absent case. Pin the
+    distinction."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "answers.enc"
+        ledger, diag = _sample_ledger_and_diag()
+        write_answer_file(
+            path, ledger, "passphrase", diagnostics=diag, sources=[]
+        )
+        _, _, loaded_sources = read_answer_file(path, "passphrase")
+        assert loaded_sources == []
+        assert loaded_sources is not None
 
 
 def test_unsupported_kdf_algorithm_raises():

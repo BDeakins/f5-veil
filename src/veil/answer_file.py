@@ -32,8 +32,16 @@ Plaintext payload (versioned JSON, then encrypted)::
     {
       "veil_payload_version": 1,
       "ledger": {"entries": [{"placeholder": "POOL_0001", ...}, ...]},
-      "diagnostics": {...}
+      "diagnostics": {...},
+      "sources": ["bigip_base.conf", "bigip.conf"]
     }
+
+``sources`` was added in v1.2 to record the ordered list of input
+filenames for multi-file (``bigip_base.conf`` + ``bigip.conf``)
+operations. It is optional — single-file answer files written by
+v1.0/v1.1 (and single-file calls from v1.2+) omit the field, and the
+reader returns ``None`` in that case. Payload version stays at 1; the
+field is additive and ignorable by older readers.
 
 Both layers use ``json.dumps(..., sort_keys=True, indent=2)`` for
 deterministic, diff-friendly output (audit-friendly).
@@ -102,17 +110,27 @@ def write_answer_file(
     passphrase: bytes | str,
     *,
     diagnostics: Diagnostics | None = None,
+    sources: list[str] | None = None,
 ) -> None:
     """Encrypt the ledger (and optional diagnostics) and write to ``path``.
 
     Atomic: writes to ``<path>.tmp`` and ``os.replace``s into place. If
     the ledger is unfrozen, freezes it before serialization (the answer
     file must reflect a final ledger state, not one mid-mutation).
+
+    ``sources`` (v1.2) records the ordered list of input filenames for
+    multi-file operations. Single-file callers should leave it ``None``;
+    multi-file callers should pass the same list they handed to
+    :func:`veil.scanner.scan_many`. The reader exposes the field via
+    its return tuple so deobfuscate can verify the operator is feeding
+    in the right files.
     """
     path = Path(path)
     if not ledger.frozen:
         ledger.freeze()
-    payload_bytes = _payload_to_bytes(ledger, diagnostics or Diagnostics())
+    payload_bytes = _payload_to_bytes(
+        ledger, diagnostics or Diagnostics(), sources
+    )
     salt = os.urandom(_SALT_LENGTH)
     nonce = os.urandom(_NONCE_LENGTH)
     key = _derive_key(
@@ -150,8 +168,11 @@ def write_answer_file(
 def read_answer_file(
     path: str | os.PathLike[str],
     passphrase: bytes | str,
-) -> tuple[Ledger, Diagnostics]:
-    """Decrypt and load an answer file. Returns ``(ledger, diagnostics)``.
+) -> tuple[Ledger, Diagnostics, list[str] | None]:
+    """Decrypt and load an answer file. Returns
+    ``(ledger, diagnostics, sources)`` where ``sources`` is the v1.2
+    multi-file filename list or ``None`` for single-file answer files
+    (including all v1.0/v1.1 files, which never wrote the field).
 
     The returned ledger is frozen. Any failure raises
     :class:`AnswerFileError`; the decryption-failure path uses a
@@ -262,8 +283,12 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
-def _payload_to_bytes(ledger: Ledger, diagnostics: Diagnostics) -> bytes:
-    payload = {
+def _payload_to_bytes(
+    ledger: Ledger,
+    diagnostics: Diagnostics,
+    sources: list[str] | None = None,
+) -> bytes:
+    payload: dict = {
         "veil_payload_version": 1,
         "ledger": {"entries": ledger.dump_unsafe()},
         "diagnostics": {
@@ -283,10 +308,14 @@ def _payload_to_bytes(ledger: Ledger, diagnostics: Diagnostics) -> bytes:
             "ipv4_subnet_collapsed": list(diagnostics.ipv4_subnet_collapsed),
         },
     }
+    if sources is not None:
+        payload["sources"] = list(sources)
     return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8")
 
 
-def _payload_from_dict(payload: dict) -> tuple[Ledger, Diagnostics]:
+def _payload_from_dict(
+    payload: dict,
+) -> tuple[Ledger, Diagnostics, list[str] | None]:
     version = payload.get("veil_payload_version")
     if version not in SUPPORTED_PAYLOAD_VERSIONS:
         raise AnswerFileError(
@@ -295,9 +324,14 @@ def _payload_from_dict(payload: dict) -> tuple[Ledger, Diagnostics]:
     try:
         ledger = _ledger_from_entries(payload["ledger"]["entries"])
         diagnostics = _diagnostics_from_dict(payload.get("diagnostics", {}))
+        raw_sources = payload.get("sources")
+        if raw_sources is None:
+            sources = None
+        else:
+            sources = [str(s) for s in raw_sources]
     except (KeyError, ValueError, TypeError):
         raise AnswerFileError("decrypted payload is malformed") from None
-    return ledger, diagnostics
+    return ledger, diagnostics, sources
 
 
 def _ledger_from_entries(entries: list[dict]) -> Ledger:
