@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "f5-veil"
-version = "1.1.0"
+version = "1.1.1"
 description = "F5 BIG-IP config obfuscator/de-obfuscator — sanitize customer configs for safe AI analysis"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT-Modified — see LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Blake Deakins" },
 ]

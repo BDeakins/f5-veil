@@ -243,12 +243,10 @@ tripped under `--strict`.
 
 ## License
 
-**MIT-Modified — source-available with a named-party exclusion.**
+MIT — see [LICENSE](LICENSE).
 
-This is NOT OSI-approved open source. See [LICENSE](LICENSE) for the
-full text. The license is legally valid and enforceable; it simply does
-not meet the OSI Open Source Definition (clause 5: no discrimination
-against persons or groups).
+A personal statement of intent regarding the audience of this work is in
+[DISCLAIMER.md](DISCLAIMER.md). It is not a license term.
 
 ## Security
 
