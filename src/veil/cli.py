@@ -33,6 +33,7 @@ from .leak_detector import LeakReport, scan_leaks
 from .ledger import Ledger
 from .scanner import scan, scan_many
 from .substitute import reverse_substitute, substitute
+from .ucs_archive import UcsExtractError, extract_ucs_configs, is_ucs_file
 
 
 EXIT_OK = 0
@@ -183,21 +184,37 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_obfuscate(args: argparse.Namespace) -> int:
     input_args: list[str] = args.input
-    multi = len(input_args) > 1
 
-    # Validate input/output flag combinations before doing any work.
-    err = _validate_obfuscate_output_flags(args, multi, input_args)
-    if err is not None:
-        return err
+    # UCS detection happens before everything else: a UCS expands
+    # into N virtual inputs (one per allowlisted config member), so
+    # the multi/single decision and output-flag validation below
+    # both need to see the expanded view.
+    ucs_outcome = _maybe_expand_ucs_inputs(args, input_args)
+    if isinstance(ucs_outcome, int):
+        return ucs_outcome
+    if ucs_outcome is not None:
+        sources_data, ucs_skipped = ucs_outcome
+        multi = True
+        _err(
+            f"UCS input: extracted {len(sources_data)} config "
+            f"member(s); ignored {ucs_skipped} non-config member(s)"
+        )
+    else:
+        multi = len(input_args) > 1
 
-    # Read all inputs. Each entry is (label, content) where ``label``
-    # is the original CLI argument (preserved for path-derivation and
-    # error messages); the answer file gets the basenames only.
-    try:
-        sources_data = [(arg, _read_input(arg)) for arg in input_args]
-    except OSError as exc:
-        _err(f"could not read input: {exc!s}")
-        return EXIT_IO_ERROR
+        # Validate input/output flag combinations before doing any work.
+        err = _validate_obfuscate_output_flags(args, multi, input_args)
+        if err is not None:
+            return err
+
+        # Read all inputs. Each entry is (label, content) where ``label``
+        # is the original CLI argument (preserved for path-derivation and
+        # error messages); the answer file gets the basenames only.
+        try:
+            sources_data = [(arg, _read_input(arg)) for arg in input_args]
+        except OSError as exc:
+            _err(f"could not read input: {exc!s}")
+            return EXIT_IO_ERROR
 
     if multi:
         # ``scan_many`` shares the ledger across files; base file goes
@@ -371,6 +388,93 @@ def _label_for_answer_file(input_arg: str) -> str:
     ``sources`` list. Strips directory components so the answer file
     doesn't bake in the operator's working-directory layout."""
     return Path(input_arg).name
+
+
+def _maybe_expand_ucs_inputs(
+    args: argparse.Namespace, input_args: list[str]
+) -> tuple[list[tuple[str, str]], int] | int | None:
+    """If the operator passed a UCS archive as input, extract the
+    allowlisted config members and return them as virtual
+    ``(label, content)`` sources plus the skipped-member count.
+
+    Return shapes:
+    - ``None`` — no UCS in the input list; fall through to plain-file flow.
+    - ``int`` (exit code) — UCS mode rejected for some reason; caller returns it.
+    - ``(sources_data, skipped_count)`` — UCS mode engaged; caller uses these.
+
+    UCS mode rejects:
+    - ``--input`` mixed with a UCS and a plain file
+    - more than one UCS in ``--input``
+    - ``-`` (stdin) anywhere alongside a UCS
+    - ``--output`` set (UCS always produces N files; use ``--output-dir``)
+    - ``--output-dir`` absent (unless ``--dry-run``)
+    - any :class:`UcsExtractError` from the extractor
+    """
+    ucs_inputs = [
+        arg for arg in input_args
+        if arg != "-" and is_ucs_file(arg)
+    ]
+    if not ucs_inputs:
+        # No UCS detected. But if the operator named something with
+        # a ``.ucs`` suffix that didn't pass the magic-byte check,
+        # surface that early — a renamed plaintext file is almost
+        # certainly an operator mistake.
+        suspicious = [
+            arg for arg in input_args
+            if arg != "-" and Path(arg).suffix.lower() == ".ucs"
+        ]
+        if suspicious:
+            _err(
+                f"input has .ucs extension but is not a gzipped tar: "
+                f"{suspicious!r}"
+            )
+            return EXIT_USER_ERROR
+        return None
+
+    if len(ucs_inputs) > 1:
+        _err(
+            f"multiple UCS inputs not supported (got {len(ucs_inputs)}); "
+            f"process them one at a time"
+        )
+        return EXIT_USER_ERROR
+    if len(input_args) > 1:
+        _err(
+            "UCS inputs cannot be mixed with plain --input files; "
+            "the UCS already contains the full config set"
+        )
+        return EXIT_USER_ERROR
+    if "-" in input_args:
+        _err("stdin ('-') not supported with UCS input")
+        return EXIT_USER_ERROR
+    if args.output:
+        _err(
+            "--output not valid with UCS input; UCS expands to multiple "
+            "files — use --output-dir"
+        )
+        return EXIT_USER_ERROR
+    if not args.output_dir and not args.dry_run:
+        _err("--output-dir is required with UCS input")
+        return EXIT_USER_ERROR
+
+    ucs_path = ucs_inputs[0]
+    try:
+        result = extract_ucs_configs(ucs_path)
+    except UcsExtractError as exc:
+        _err(f"{exc!s}")
+        return EXIT_IO_ERROR
+
+    # Use the archive-internal path as the label. The existing
+    # multi-file machinery calls ``Path(label).name`` to derive the
+    # per-file output name, which yields ``bigip_base.conf`` etc. —
+    # exactly what we want in ``--output-dir``. The answer file's
+    # ``sources`` list will likewise record basenames via
+    # ``_label_for_answer_file``; that's adequate for session 1
+    # (the four allowlisted basenames are unambiguous within the
+    # config-member set).
+    sources_data = [
+        (member_name, content) for member_name, content in result.configs
+    ]
+    return sources_data, result.skipped_member_count
 
 
 # ---------------------------------------------------------------------
