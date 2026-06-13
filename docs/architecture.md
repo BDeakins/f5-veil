@@ -379,6 +379,120 @@ src/veil/
 | 4 | decryption failed (wrong passphrase or tampered answer file) |
 | 5 | leak detector tripped under `--strict` |
 
+## UCS archive ingestion (`veil.ucs_archive`)
+
+A BIG-IP UCS is a gzipped tarball with hundreds to thousands of
+entries — every config + state file the appliance needs to restore
+itself. v1.2 added UCS support as an **extract-only multi-file input
+source**. We never recreate the archive.
+
+### Threat model
+
+- The CLI's baseline threat model is "engineer's own machine,
+  customer data never crosses the wire in cleartext, the encrypted
+  answer file is the only artifact that leaves." UCS adds a layer
+  but keeps that property — we read the archive locally, extract
+  the four allowlisted config-file members, sanitize them, and emit
+  text files into `--output-dir`.
+- **Nothing else leaves.** Non-allowlisted members are never read,
+  never written, never named in output. The 496 MB of certs, keys,
+  state DBs, licenses, and `.diffVersions/` snapshots in a real UCS
+  pass through the extractor's `for member in tar:` loop without
+  ever being opened.
+- **No re-pack.** The operator keeps the original UCS, deobfuscates
+  the four sanitized text files via the existing N-file flow, and
+  if they want closed-loop they manually re-pack into the original
+  UCS shape. Re-packing in code would mean the obfuscator wrote a
+  binary artifact that mirrors the input's structure — a strictly
+  larger trust boundary, and one we've deliberately kept out.
+
+### Allowlist
+
+Three canonical paths inside `config/`, matched by exact string
+equality (no globbing, no path resolution, no symlink following):
+
+| Member                          | Required | Typical size |
+|---------------------------------|----------|--------------|
+| `config/bigip_base.conf`        | yes      | 10s of KB    |
+| `config/bigip.conf`             | yes      | 100s of KB to a few MB |
+| `config/bigip_user.conf`        | no       | < 1 KB       |
+
+Order is load-bearing: base first so `scan_many` sees the base
+file's VLAN / SELF_IP / ROUTE_DOMAIN definitions before the main
+file's references need to resolve. Optional members follow in
+declared order if present.
+
+`config/bigip_script.conf` is **deliberately excluded** from the
+v1.2 allowlist. Its iApp template bodies routinely contain literal
+RFC 5737 docs-range IPs (`192.0.2.7`, `192.0.2.10-192.0.2.19`,
+`192.0.2.0/24`) inside user-facing example help text. These collide
+with VEIL's IP placeholder model — customer IPs are substituted INTO
+docs-range IPs (not into symbolic `IPADDR_NNNN` placeholders), and
+reverse-substitute cannot distinguish a docs-range IP that was
+allocated from a docs-range IP that was already present in the
+source. Real-world round-trip breaks at script.conf scale (verified
+on the v1.2 integration corpus: 8 lines / 2 bytes lost per 1.5 MB).
+The architectural fix — reserve source-literal docs IPs from the
+allocation pool before any allocation — is tracked for v1.3 / v2.0.
+Operator workaround: hand `bigip_script.conf` to the LLM as a
+separate plain-text file if iRule / iApp coverage is needed.
+
+### What's NOT in the allowlist (and why)
+
+- **`.diffVersions/config/...`** — frozen historical snapshots the
+  appliance keeps for its own diffing. They contain stale copies of
+  the live configs; the operator doesn't need them sanitized
+  because they don't leave the appliance via this flow. Skipping
+  them keeps the trust surface minimal.
+- **`config/bigip.license`** and rotated licenses — non-sensitive,
+  irrelevant to LLM analysis.
+- **`config/BigDB.dat`** — appliance state database, binary, not a
+  config the operator edits.
+- **TLS keys / certs** — out of scope by policy. The operator
+  should never be uploading those to an LLM regardless.
+- **State files under `var/`, `etc/`, `home/`, `root/`, `SPEC-*`** —
+  not configs.
+
+### Defensive checks
+
+The allowlist match is by exact-string equality, which already
+blocks path traversal in member names — `../etc/passwd` can't equal
+`config/bigip.conf`. The `_validate_member_shape` checks are
+belt-and-braces for tarballs that ship a canonical-named member
+with a malicious shape:
+
+- Refuse symlinks / hardlinks (tar types `2` / `1`) on allowlisted
+  members — a symlink with a canonical name could redirect content
+  to `/etc/passwd` on extraction.
+- Refuse directories on allowlisted member names.
+- Refuse `..` segments or absolute / backslash paths even on the
+  canonical names (impossible by allowlist equality, but the check
+  exists so a future allowlist change doesn't silently weaken the
+  contract).
+- Per-member 50 MiB cap (`MAX_CONFIG_MEMBER_BYTES`) refuses
+  oversized members. Real config files top out around 2 MB.
+- Strict UTF-8 decoding — silent mangling of non-UTF-8 bytes would
+  defeat round-trip exactness.
+
+### CLI integration
+
+`veil obfuscate --input device.ucs --output-dir sanitized/
+--answer-file device.answers` auto-detects the UCS (by `.ucs`
+extension + gzip magic), expands it into N virtual sources, and
+runs them through the existing multi-file pipeline. UCS input
+rejects:
+
+- being mixed with plain `--input` files
+- multiple UCS in one invocation
+- stdin alongside UCS
+- `--output` (UCS always produces N files; must use `--output-dir`)
+- missing `--output-dir`
+- `.ucs` extension with non-gzip content (renamed-plaintext mistake)
+
+Deobfuscate is unchanged. The operator deobfuscates the four
+sanitized text files via the standard N-file flow against the
+recorded `sources` list in the answer file.
+
 ## Known gaps (deferred to follow-up PRs)
 
 - **CLI wiring + answer file** — landed in v0.0.1.
@@ -470,9 +584,10 @@ src/veil/
   only: UNK paths can still leak via substring inside longer
   non-header barewords. Safety-critical kinds
   (POOL/VS/NODE/MON/IRULE) remain strictly enforced.
-- **`bigip_base.conf` multi-file two-pass** (v1.2).
-- **UCS archive ingestion** (v1.2 — bundled with multi-file since
-  both expand the input-source model).
+- **`bigip_base.conf` multi-file two-pass** — landed in v1.2.
+- **UCS archive ingestion** — landed in v1.2. Extract-only by
+  design; see "UCS archive ingestion" section above for the
+  threat model and allowlist rationale.
 - **Personal-use Docker + FastAPI web wrapper** (v1.3). See threat
   model below for why this is distinct from a hardened service.
 - **Persistent cross-run identifier map** (v2.0).

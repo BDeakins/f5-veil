@@ -56,9 +56,30 @@ skip_if_no_real_pair = pytest.mark.skipif(
     ),
 )
 
+# v1.2 — UCS archive fixtures. Any ``*.ucs`` file beneath
+# ``test_configs/customer/`` is treated as a real-world UCS and
+# exercised end-to-end through the CLI's UCS-input path. Skipped if
+# no UCS is staged. Heavy (a UCS can be 500+ MB on disk with ~2 MB
+# of config-member content) — keep assertions structural-only and
+# never echo identifier names.
+_REAL_UCS = (
+    sorted(_REAL_CONFIGS_DIR.rglob("*.ucs"))
+    if _REAL_CONFIGS_DIR.exists()
+    else []
+)
+
+skip_if_no_real_ucs = pytest.mark.skipif(
+    not _REAL_UCS,
+    reason="no real UCS in test_configs/customer/**/*.ucs",
+)
+
 
 def _pair_id(p: Path) -> str:
     return p.name
+
+
+def _ucs_id(p: Path) -> str:
+    return p.stem
 
 # Kinds whose ``entry.original`` is a full ``/Partition/leaf`` path. The
 # anti-leak invariant must hold for these: pass-2 substitution always
@@ -326,4 +347,137 @@ def test_real_config_pair_base_file_objects_visible_in_ledger(pair_dir: Path):
         "(VLAN / SELF_IP / ROUTE_DOMAIN / TRUNK) over scanning the main "
         "file alone. Either the base file has no such objects (unusual) "
         "or scan_many's ledger-sharing is broken."
+    )
+
+
+# ---------------------------------------------------------------------
+# v1.2 — UCS archive integration
+# ---------------------------------------------------------------------
+
+
+@skip_if_no_real_ucs
+@pytest.mark.parametrize("ucs_path", _REAL_UCS, ids=_ucs_id)
+def test_real_ucs_extract_succeeds(ucs_path: Path):
+    """The extractor opens a real-world UCS and produces the
+    allowlisted config members. Structural assertions only — counts
+    and member names are universal, no customer identifiers leak."""
+    from veil.ucs_archive import (
+        CONFIG_MEMBERS_REQUIRED,
+        extract_ucs_configs,
+    )
+
+    result = extract_ucs_configs(ucs_path)
+    extracted_names = [n for n, _ in result.configs]
+
+    # Required members are present, base file first (load-bearing
+    # for scan_many ordering).
+    for required in CONFIG_MEMBERS_REQUIRED:
+        assert required in extracted_names, (
+            f"required UCS member {required!r} not found; "
+            f"got {extracted_names!r}"
+        )
+    assert extracted_names[0] == "config/bigip_base.conf", (
+        f"base file must be first in extraction order; "
+        f"got {extracted_names!r}"
+    )
+
+    # Real UCS has hundreds to thousands of members; we should be
+    # ignoring almost all of them.
+    assert result.skipped_member_count >= 100, (
+        f"skipped only {result.skipped_member_count} members; "
+        f"real UCSes have hundreds — extractor may be reading "
+        f"too much"
+    )
+    print(
+        f"\n[{ucs_path.stem}] UCS extract: "
+        f"{len(result.configs)} config member(s); "
+        f"{result.skipped_member_count} ignored; "
+        f"{result.total_member_count} total"
+    )
+
+
+@skip_if_no_real_ucs
+@pytest.mark.parametrize("ucs_path", _REAL_UCS, ids=_ucs_id)
+def test_real_ucs_round_trip_via_cli_is_byte_identical(
+    ucs_path: Path, tmp_path: Path, monkeypatch
+):
+    """Obfuscate from a real UCS, deobfuscate the extracted
+    sanitized text files, assert byte-exact round-trip for every
+    extracted member.
+
+    Load-bearing acceptance test for v1.2 UCS support — if this
+    breaks, customer-sensitive content is being mangled by the
+    obfuscation pipeline at real-world scale.
+    """
+    from veil.ucs_archive import extract_ucs_configs
+
+    sanitized_dir = tmp_path / "sanitized"
+    restored_dir = tmp_path / "restored"
+    answer = tmp_path / "answers.enc"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "integration-test")
+    rc = main([
+        "obfuscate",
+        "--input", str(ucs_path),
+        "--output-dir", str(sanitized_dir),
+        "--answer-file", str(answer),
+        "--allow-incomplete",
+    ])
+    assert rc == EXIT_OK, f"obfuscate returned {rc}"
+
+    # Snapshot the original config-member content from the UCS so
+    # we can compare against the restored text files. The extractor
+    # is the only way to get content; we trust it for this purpose
+    # because test_real_ucs_extract_succeeds covers the extract
+    # contract directly.
+    original = dict(extract_ucs_configs(ucs_path).configs)
+    extracted_basenames = [
+        Path(name).name for name in original.keys()
+    ]
+
+    # Deobfuscate the sanitized text files. ``--input`` order must
+    # match the answer file's recorded ``sources`` (base first, in
+    # CONFIG_MEMBERS order).
+    rc = main(
+        ["deobfuscate"]
+        + [
+            arg
+            for basename in extracted_basenames
+            for arg in ("--input", str(sanitized_dir / basename))
+        ]
+        + [
+            "--output-dir", str(restored_dir),
+            "--answer-file", str(answer),
+        ]
+    )
+    assert rc == EXIT_OK, f"deobfuscate returned {rc}"
+
+    # Each restored file matches the original archive content
+    # byte-for-byte.
+    for archive_name, original_text in original.items():
+        basename = Path(archive_name).name
+        restored_text = (restored_dir / basename).read_text(
+            encoding="utf-8"
+        )
+        if restored_text != original_text:
+            # Report structural delta only — never quote content.
+            orig_lines = original_text.splitlines()
+            restored_lines = restored_text.splitlines()
+            diff_lines = sum(
+                1 for a, b in zip(orig_lines, restored_lines)
+                if a != b
+            )
+            diff_lines += abs(
+                len(orig_lines) - len(restored_lines)
+            )
+            pytest.fail(
+                f"UCS member {archive_name!r} did not round-trip "
+                f"byte-identical: "
+                f"orig_len={len(original_text)} "
+                f"restored_len={len(restored_text)} "
+                f"diff_lines={diff_lines}"
+            )
+    print(
+        f"\n[{ucs_path.stem}] UCS round-trip OK: "
+        f"{len(original)} member(s) byte-identical"
     )

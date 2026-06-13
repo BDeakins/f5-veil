@@ -77,7 +77,7 @@ def _build_ucs(
 # ---------- happy-path round trip ----------
 
 
-def test_ucs_obfuscate_emits_all_four_sanitized_files(tmp_path, monkeypatch):
+def test_ucs_obfuscate_emits_allowlisted_sanitized_files(tmp_path, monkeypatch):
     ucs = tmp_path / "device.ucs"
     _build_ucs(ucs)
     out_dir = tmp_path / "sanitized"
@@ -94,11 +94,13 @@ def test_ucs_obfuscate_emits_all_four_sanitized_files(tmp_path, monkeypatch):
     assert rc == 0
 
     # Every allowlisted member came out as a file under --output-dir,
-    # named by basename only.
+    # named by basename only. bigip_script.conf is NOT extracted
+    # (excluded from the v1.2 allowlist; see ucs_archive module
+    # docstring).
     assert (out_dir / "bigip_base.conf").exists()
     assert (out_dir / "bigip.conf").exists()
-    assert (out_dir / "bigip_script.conf").exists()
     assert (out_dir / "bigip_user.conf").exists()
+    assert not (out_dir / "bigip_script.conf").exists()
     assert answer.exists()
 
     # Customer-identifying tokens redacted.
@@ -129,14 +131,13 @@ def test_ucs_round_trip_via_text_deobfuscate(tmp_path, monkeypatch):
     assert rc == 0
 
     restored = tmp_path / "restored"
-    # Deobfuscate against the four sanitized text files in
-    # CONFIG_MEMBERS order (base first), matching the recorded
-    # sources list in the answer file.
+    # Deobfuscate against the sanitized text files in CONFIG_MEMBERS
+    # order (base first), matching the recorded sources list in the
+    # answer file. bigip_script.conf is NOT in the v1.2 allowlist.
     rc2 = main([
         "deobfuscate",
         "--input", str(out_dir / "bigip_base.conf"),
         "--input", str(out_dir / "bigip.conf"),
-        "--input", str(out_dir / "bigip_script.conf"),
         "--input", str(out_dir / "bigip_user.conf"),
         "--output-dir", str(restored),
         "--answer-file", str(answer),
@@ -144,13 +145,13 @@ def test_ucs_round_trip_via_text_deobfuscate(tmp_path, monkeypatch):
     assert rc2 == 0
     assert (restored / "bigip_base.conf").read_text(encoding="utf-8") == _BASE
     assert (restored / "bigip.conf").read_text(encoding="utf-8") == _MAIN
-    assert (restored / "bigip_script.conf").read_text(encoding="utf-8") == _SCRIPT
     assert (restored / "bigip_user.conf").read_text(encoding="utf-8") == _USER
 
 
 def test_ucs_with_optional_members_missing(tmp_path, monkeypatch):
-    """UCS without script.conf / user.conf still obfuscates the
-    required pair successfully."""
+    """UCS without user.conf still obfuscates the required pair
+    successfully (bigip_script.conf is never in the allowlist
+    regardless)."""
     ucs = tmp_path / "device.ucs"
     _build_ucs(ucs, script=None, user=None)
     out_dir = tmp_path / "sanitized"
@@ -195,8 +196,10 @@ def test_ucs_noise_members_ignored(tmp_path, monkeypatch, capsys):
     assert rc == 0
     err = capsys.readouterr().err
     # The CLI announces the skipped member count for operator audit.
-    assert "extracted 4" in err
-    assert "ignored 4" in err
+    # 3 allowlisted (base + main + user) extracted; 5 ignored
+    # (bigip_script.conf + 4 noise members).
+    assert "extracted 3" in err
+    assert "ignored 5" in err
 
 
 # ---------- rejections ----------
@@ -306,6 +309,63 @@ def test_ucs_missing_required_member_rejected(tmp_path, monkeypatch, capsys):
     assert "missing required" in err
 
 
+# ---------- leak detector coverage ----------
+
+
+def test_strict_leak_detection_covers_every_emitted_file(tmp_path, monkeypatch):
+    """Regression guard: ``--strict`` must run the leak detector
+    over content from EVERY emitted file, not just the first.
+
+    Plants a unique sentinel inside the LAST allowlisted member in
+    extraction order (``bigip_user.conf``), monkey-patches
+    ``scan_leaks`` to capture what it sees, and asserts the sentinel
+    was present in the captured input. If a future refactor drops
+    trailing files from the leak-detector input (e.g. scans only
+    ``sanitized_per_file[0]``), this test flips immediately.
+    """
+    from veil import cli as cli_module
+    original_scan_leaks = cli_module.scan_leaks
+    captured: dict[str, str] = {}
+
+    def fake_scan_leaks(text: str):
+        captured["text"] = text
+        return original_scan_leaks(text)
+
+    monkeypatch.setattr(cli_module, "scan_leaks", fake_scan_leaks)
+
+    # Sentinel string is structurally inert (a comment) so the
+    # scanner doesn't try to interpret it; we only care that it
+    # reaches the leak detector.
+    sentinel = "ZZZ_LEAK_DETECTOR_SENTINEL_FROM_USER_CONF_ZZZ"
+    ucs = tmp_path / "device.ucs"
+    _build_ucs(
+        ucs,
+        # Plant the sentinel ONLY in user.conf (the trailing
+        # allowlisted member) — base and main must not contain it.
+        user=f"# {sentinel}\n# bigip_user.conf - sentinel fixture\n",
+    )
+    out_dir = tmp_path / "sanitized"
+    answer = tmp_path / "answers.enc"
+
+    monkeypatch.setenv("VEIL_PASSPHRASE", "test-pass")
+    rc = main([
+        "obfuscate",
+        "--input", str(ucs),
+        "--output-dir", str(out_dir),
+        "--answer-file", str(answer),
+        "--allow-incomplete",
+    ])
+    assert rc == 0
+    assert "text" in captured, (
+        "scan_leaks was never called; leak detection path is dead"
+    )
+    assert sentinel in captured["text"], (
+        "scan_leaks did not see bigip_user.conf content — leak "
+        "detection coverage is broken for trailing files in "
+        "multi-file mode"
+    )
+
+
 # ---------- answer file shape ----------
 
 
@@ -330,9 +390,10 @@ def test_ucs_answer_file_records_sources(tmp_path, monkeypatch):
     assert rc == 0
 
     _ledger, _diag, sources = read_answer_file(answer, b"test-pass")
+    # bigip_script.conf is NOT in the v1.2 allowlist; the recorded
+    # sources list reflects the actual extraction order.
     assert sources == [
         "bigip_base.conf",
         "bigip.conf",
-        "bigip_script.conf",
         "bigip_user.conf",
     ]

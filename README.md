@@ -120,6 +120,61 @@ veil obfuscate --input bigip.conf --strict ...
 veil obfuscate --input bigip.conf --allow-incomplete ...
 ```
 
+### Multi-file mode (`bigip_base.conf` + `bigip.conf`)
+
+```bash
+# Pass both files; base file first so its objects (VLANs, self-IPs,
+# route domains) land in the ledger before the main file's references
+# need to resolve. Output goes to a directory keyed by basename.
+veil obfuscate --input bigip_base.conf \
+               --input bigip.conf \
+               --output-dir sanitized/ \
+               --answer-file device.answers.enc
+
+veil deobfuscate --input sanitized/bigip_base.conf \
+                 --input sanitized/bigip.conf \
+                 --output-dir restored/ \
+                 --answer-file device.answers.enc
+```
+
+`--input` order on the deobfuscate side must match the order recorded
+in the answer file at obfuscation time. Reordering is a hard error,
+not a silent miscorrelation.
+
+### UCS archive mode (`device.ucs`)
+
+```bash
+# Hand VEIL the UCS directly. It extracts the allowlisted config-file
+# members (config/bigip_base.conf, config/bigip.conf, and the
+# optional config/bigip_user.conf), obfuscates each, and writes them
+# as separate text files into --output-dir. Everything else in the
+# UCS (bigip_script.conf, certs, keys, licenses, binaries, state
+# files, .diffVersions snapshots) is ignored — never read, never
+# written.
+veil obfuscate --input device.ucs \
+               --output-dir sanitized/ \
+               --answer-file device.answers.enc
+
+# Deobfuscate the sanitized text files via the standard multi-file
+# flow. VEIL does NOT recreate the UCS — if you need a closed-loop
+# UCS for restore, re-pack the restored files into the original
+# archive yourself (e.g. with tar).
+veil deobfuscate --input sanitized/bigip_base.conf \
+                 --input sanitized/bigip.conf \
+                 --input sanitized/bigip_user.conf \
+                 --output-dir restored/ \
+                 --answer-file device.answers.enc
+```
+
+**Note on `bigip_script.conf`:** the file containing iRules and
+iApp templates is intentionally NOT in the v1.2 UCS allowlist —
+its iApp template bodies contain literal RFC 5737 docs-range IPs
+in user-facing help text that collide with VEIL's IP placeholder
+model. See `docs/architecture.md` ("UCS archive ingestion") for the
+threat model, allowlist rationale, and the architectural fix
+planned for v1.3 / v2.0. If you need iRule / iApp coverage today,
+hand `bigip_script.conf` to the LLM as a separate plain-text file.
+
 Exit codes: 0 success, 2 CLI usage error, 3 input not readable, 4
 diagnostics non-empty without `--allow-incomplete`, 5 leak detector
 tripped under `--strict`.
@@ -153,8 +208,8 @@ tripped under `--strict`.
 
 **Not yet handled (v1.1+):**
 
-- Multi-file ingestion (`bigip_base.conf`) — v1.1
-- UCS archive ingestion — v1.2
+- Multi-file ingestion (`bigip_base.conf`) — shipped in v1.2
+- UCS archive ingestion — shipped in v1.2 (extract-only)
 - Persistent cross-run identifier map — v2.0
 - `gtm topology`, `net interface`, `security dos`, `apm aaa`/`sso`/`acl`,
   full ASM policy coverage — v1.1+

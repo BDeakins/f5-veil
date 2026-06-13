@@ -14,11 +14,13 @@ the original UCS shape).
 
 Hard rules
 ----------
-- Allowlist only: ``config/bigip{_base,_script,_user}.conf`` and
-  ``config/bigip.conf``. Every other archive member is ignored.
+- Allowlist only: ``config/bigip_base.conf``, ``config/bigip.conf``,
+  ``config/bigip_user.conf``. Every other archive member is ignored
+  (see :data:`CONFIG_MEMBERS_OPTIONAL` for why
+  ``config/bigip_script.conf`` is NOT in the allowlist).
 - Required: ``config/bigip.conf`` and ``config/bigip_base.conf``.
-  ``config/bigip_script.conf`` and ``config/bigip_user.conf`` are
-  optional (small/older F5 versions may omit them).
+  ``config/bigip_user.conf`` is optional (older F5 versions may
+  omit it).
 - Defensive: reject allowlisted members that are symlinks /
   hardlinks / directories, have absolute paths, or contain ``..``
   segments. The allowlist itself already pins the canonical paths;
@@ -49,8 +51,20 @@ CONFIG_MEMBERS_REQUIRED: tuple[str, ...] = (
     "config/bigip_base.conf",
     "config/bigip.conf",
 )
+# v1.2 ships ``bigip_user.conf`` as the only optional member. The other
+# obvious candidate, ``config/bigip_script.conf``, is deliberately
+# excluded — its iApp template bodies routinely contain literal
+# RFC 5737 docs-range IPs (``192.0.2.7``, ``192.0.2.10``, etc.) inside
+# user-facing example help text, which collides with VEIL's IP
+# placeholder model (customer IPs are substituted INTO docs-range IPs,
+# not into symbolic ``IPADDR_NNNN`` placeholders). Reverse-substitute
+# cannot distinguish a docs-range IP that was allocated from a
+# docs-range IP that was already present in the source — round-trip
+# breaks at real-world script.conf scale. Fix is architectural
+# (reserve source-literal docs IPs from the allocation pool) and is
+# tracked for v1.3 / v2.0. Operator workaround: hand bigip_script.conf
+# to the LLM as a separate plain-text file if needed.
 CONFIG_MEMBERS_OPTIONAL: tuple[str, ...] = (
-    "config/bigip_script.conf",
     "config/bigip_user.conf",
 )
 CONFIG_MEMBERS: tuple[str, ...] = (

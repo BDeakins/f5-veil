@@ -135,15 +135,20 @@ def test_is_ucs_file_case_insensitive_extension(tmp_path):
 # ---------- extract_ucs_configs — happy paths ----------
 
 
-def test_extract_all_four(tmp_path):
+def test_extract_all_allowlisted(tmp_path):
     p = _all_four(tmp_path)
     result = extract_ucs_configs(p)
-    assert len(result.configs) == 4
-    assert result.skipped_member_count == 0
+    # _all_four also writes config/bigip_script.conf into the
+    # synthetic UCS, but script.conf is NOT in the allowlist (see
+    # CONFIG_MEMBERS_OPTIONAL docstring) so it gets ignored. We
+    # extract base + main + user only.
+    assert len(result.configs) == len(CONFIG_MEMBERS)
+    assert result.skipped_member_count == 4 - len(CONFIG_MEMBERS)
     assert result.total_member_count == 4
     names = [n for n, _ in result.configs]
-    # Order matches CONFIG_MEMBERS: base first, then main, then script, user.
+    # Order matches CONFIG_MEMBERS: base first, then main, then user.
     assert names == list(CONFIG_MEMBERS)
+    assert "config/bigip_script.conf" not in names
 
 
 def test_extract_required_only(tmp_path):
@@ -164,8 +169,9 @@ def test_extract_preserves_content_byte_exact(tmp_path):
     contents = dict(result.configs)
     assert contents["config/bigip_base.conf"] == _MIN_BASE.decode("utf-8")
     assert contents["config/bigip.conf"] == _MIN_MAIN.decode("utf-8")
-    assert contents["config/bigip_script.conf"] == _MIN_SCRIPT.decode("utf-8")
     assert contents["config/bigip_user.conf"] == _MIN_USER.decode("utf-8")
+    # bigip_script.conf is NOT in the allowlist — never extracted.
+    assert "config/bigip_script.conf" not in contents
 
 
 def test_extract_skips_non_config_members(tmp_path):
