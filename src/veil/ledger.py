@@ -130,6 +130,42 @@ class Kind(str, Enum):
     # ``Kind.PROFILE`` etc.) — bucket leaf renders as
     # ``/Common/REMOTE_ROLE_NNNN``; non-Common partitions get the
     # usual ``PARTITION_NNNN`` treatment.
+    SNMP_COMMUNITY = "SNMP_COMMUNITY"  # Bucket header path of an SNMP
+    # community object inside ``sys snmp { communities { ... } }``
+    # discovered by pass-1.85b (v1.2). Path-shaped registration; pass-2's
+    # generic WORD-token full-match path substitutes
+    # ``/Common/<name>`` → ``/Common/SNMP_COMMUNITY_NNNN``. The bucket
+    # leaf name itself frequently EMBEDS the community string (TMSH
+    # auto-names communities as ``i<community>_<index>``), which makes
+    # the bucket name doubly sensitive — full-path substitution covers
+    # it but the embedded substring also gets caught via the secret-
+    # value substring sub when ``community-name`` is present.
+    SNMP_TRAP = "SNMP_TRAP"  # Bucket header path of an SNMP trap
+    # destination inside ``sys snmp { traps { ... } }`` discovered by
+    # pass-1.85b (v1.2). Same path-shape and substitution model as
+    # ``Kind.SNMP_COMMUNITY``. Bucket leaf names commonly embed
+    # IP-shape substrings (``i192_168_1_1_3``) — those get caught by
+    # the IP underscore-form substring sub planned for v1.2 Phase 3a.
+    SNMP_COMMUNITY_SECRET = "SNMP_COMMUNITY_SECRET"  # Plaintext SNMP
+    # community string discovered by pass-1.85b as the value of a
+    # ``community-name`` field inside a ``communities`` bucket or a
+    # ``community`` field inside a ``traps`` bucket. Bare-placeholder
+    # substitution via pass-2's substring sub machinery (same model as
+    # ``Kind.FQDN``) — finds the secret as a substring inside any
+    # WORD or QSTRING content and replaces with
+    # ``SNMP_COMMUNITY_SECRET_NNNN``. Trap ``community`` and
+    # community ``community-name`` share this kind so the same secret
+    # interns once and substitutes consistently in both places.
+    SYS_CONTACT = "SYS_CONTACT"  # Free-text value of the
+    # ``sys-contact`` field inside ``sys snmp { ... }`` (operator
+    # contact name / email). Bareword or QSTRING form, both intern
+    # the bare value text (no surrounding quotes). Substring-sub
+    # substitution via pass-2 with bare-placeholder render
+    # (``SYS_CONTACT_NNNN``).
+    SYS_LOCATION = "SYS_LOCATION"  # Free-text value of the
+    # ``sys-location`` field inside ``sys snmp { ... }`` (physical /
+    # logical device location). Same form, same substitution model
+    # as ``Kind.SYS_CONTACT``.
 
 
 _RFC5737_NETWORKS = (

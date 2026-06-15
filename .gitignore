@@ -16,6 +16,7 @@ test_configs/real/
 # part of the project history. NEVER commit.
 # ============================================================================
 BRIDGE_NEXT_SESSION.md
+V12_LEAK_FIX_PLAN.md
 CLAUDE.md
 .claude/
 

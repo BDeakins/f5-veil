@@ -39,6 +39,7 @@ from .ip_discovery import discover_ip_literals
 from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
+from .snmp_discovery import discover_snmp
 from .tokenizer import Token, TokKind, tokenize
 
 _TWO_WORD_KINDS = MappingProxyType({
@@ -160,6 +161,12 @@ def scan(
     # inside an unknown-top-level body that pass-1's main loop skips.
     # Without this pass they survive into sanitized output.
     discover_remote_roles(src, ledger, diagnostics)
+    # Pass 1.85b — ``sys snmp`` body walker (v1.2). Pre-v1.2 the
+    # community / trap bucket headers, plaintext community-string
+    # values, and ``sys-contact`` / ``sys-location`` free-text fields
+    # all leaked verbatim because ``sys snmp`` lands in
+    # ``_record_unknown_top_level`` and pass-1 skips its body.
+    discover_snmp(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
