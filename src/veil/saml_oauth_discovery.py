@@ -54,6 +54,7 @@ _FIELD_TO_KIND = {
     "single-logout-uri": Kind.SAML_SLO_URI,
     "single-logout-response-uri": Kind.SAML_SLO_RESPONSE_URI,
     "issuer": Kind.OAUTH_ISSUER,
+    "key-id": Kind.OAUTH_KEY_ID,
 }
 
 # ``audience`` handled specially because of its braced-list shape.

@@ -257,6 +257,12 @@ class Kind(str, Enum):
     # separately. Same substitution model as ``Kind.SAML_ENTITY_ID``.
     OAUTH_ISSUER = "OAUTH_ISSUER"  # Value of ``issuer`` field.
     # Same semantics as ``Kind.SAML_ENTITY_ID``.
+    OAUTH_KEY_ID = "OAUTH_KEY_ID"  # Value of ``key-id`` field inside
+    # ``apm oauth jwk-config`` and adjacent JWK/JWT blocks, discovered
+    # by pass-1.85j (folded into the SAML/OAuth walker). Typically a
+    # compound bareword identifier (e.g. ``argo_babylon_local``).
+    # Stored bare with ``partition=None``; substring-sub renders
+    # ``OAUTH_KEY_ID_NNNN``.
 
 
 _RFC5737_NETWORKS = (
