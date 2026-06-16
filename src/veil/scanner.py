@@ -45,6 +45,7 @@ from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
 from .tokenizer import Token, TokKind, tokenize
+from .username_discovery import discover_usernames
 
 _TWO_WORD_KINDS = MappingProxyType({
     "pool": Kind.POOL,
@@ -191,6 +192,11 @@ def scan(
     # body that pass-1 brace-skips. Observed inside
     # ``apm profile connectivity``.
     discover_client_policies(src, ledger, diagnostics)
+    # Pass 1.85g — identity / hostname field walker (v1.2). Field-
+    # name allowlist (``admin-name``, ``basic-auth-username``,
+    # ``user``, ``account-name``, ``server-name``) intern the
+    # value as ``Kind.USERNAME``.
+    discover_usernames(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

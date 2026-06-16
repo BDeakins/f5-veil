@@ -207,6 +207,13 @@ class Kind(str, Enum):
     # connectivity profile name itself) leaks verbatim. Stored as
     # bare bareword with ``partition=None``; substring-sub renders
     # ``CLIENT_POLICY_NNNN``.
+    USERNAME = "USERNAME"  # Identity / hostname value attached to a
+    # field-name allowlist discovered by pass-1.85g (v1.2). Field
+    # names: ``admin-name``, ``basic-auth-username``, ``user``,
+    # ``account-name``, ``server-name``. Values may be QSTRING or
+    # WORD; TMSH literal keywords (``none``, ``default``, ``any``,
+    # etc.) and path-shaped values are skipped. Stored bare with
+    # ``partition=None``; substring-sub renders ``USERNAME_NNNN``.
 
 
 _RFC5737_NETWORKS = (
