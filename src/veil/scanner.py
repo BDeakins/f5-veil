@@ -43,6 +43,7 @@ from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
 from .krb_realm_discovery import discover_krb_realms
 from .ldap_filter_discovery import discover_ldap_filters
+from .monitor_recv_discovery import discover_monitor_recv
 from .saml_oauth_discovery import discover_saml_oauth
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
@@ -209,6 +210,10 @@ def scan(
     # substitution time picks the full-URL SAML_ENTITY_ID over the
     # inner FQDN (user explicitly approved double-tokenization).
     discover_saml_oauth(src, ledger, diagnostics)
+    # Pass 1.85k — Monitor recv walker (v1.2). Interns the value of
+    # the ``recv`` field inside LTM/GTM monitor blocks as
+    # ``Kind.MONITOR_RECV``.
+    discover_monitor_recv(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

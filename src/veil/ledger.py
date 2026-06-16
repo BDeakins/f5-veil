@@ -263,6 +263,14 @@ class Kind(str, Enum):
     # compound bareword identifier (e.g. ``argo_babylon_local``).
     # Stored bare with ``partition=None``; substring-sub renders
     # ``OAUTH_KEY_ID_NNNN``.
+    MONITOR_RECV = "MONITOR_RECV"  # Value of ``recv`` field inside
+    # ``ltm monitor`` blocks, discovered by pass-1.85k (v1.2). Carries
+    # the expected response substring that the monitor matches against
+    # — frequently product names, HTML titles, or customer-specific
+    # UI strings. Treated as opaque (whole value redacted). Stored
+    # bare with ``partition=None``; substring-sub renders
+    # ``MONITOR_RECV_NNNN``. Matches ``recv`` EXACT (not ``recv-disable``
+    # or ``recv-row``).
 
 
 _RFC5737_NETWORKS = (
