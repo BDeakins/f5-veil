@@ -75,6 +75,24 @@ _IPV4_INFIX_RE = re.compile(
 # but explicit to short-circuit before regex matching.
 _WILDCARD_WORDS = frozenset({"any", "any6", "all"})
 
+# v1.2 (finding 19) — Field-name allowlist whose VALUE may be IP-shaped
+# but is semantically a software version, not an IP address. The
+# leading-IP and infix-IP scans skip the immediately-following token
+# when the preceding WORD matches.
+#
+# Real-corpus example: ``version 17.5.1.5`` inside ``sys global-settings``
+# — pre-fix, pass-1.5 substituted the version string as if it were an
+# IP, breaking the sanitized config's version field for downstream
+# tooling that reads it.
+_VERSION_FIELDS = frozenset({
+    "version",
+    "tmsh-version",
+    "software-version",
+    "bios-version",
+    "module-version",
+    "build-version",
+})
+
 
 def discover_ip_literals(
     src: str,
@@ -93,10 +111,23 @@ def discover_ip_literals(
         raise RuntimeError(
             "ip_discovery must run before ledger.freeze()"
         )
+    # Track previous WORD token's value so we can skip version-field
+    # values that look IP-shaped (finding 19).
+    prev_word_value: str | None = None
     for tok in tokenize(src):
         if tok.kind != TokKind.WORD:
+            # LBRACE/RBRACE/QSTRING/COMMENT break the field-name
+            # adjacency.
+            prev_word_value = None
+            continue
+        # v1.2 finding 19 — skip IP-shaped values that follow a
+        # version-flavoured field name. The whole WORD passes through
+        # verbatim.
+        if prev_word_value in _VERSION_FIELDS:
+            prev_word_value = tok.value
             continue
         if tok.value in _WILDCARD_WORDS:
+            prev_word_value = tok.value
             continue
         # 1. Leading IP (preserves port / route-domain / CIDR suffix
         # handling via the WITH_SUFFIX regexes).
@@ -120,6 +151,7 @@ def discover_ip_literals(
                 tok.line,
                 ledger,
             )
+        prev_word_value = tok.value
     # Surface any subnet collapse to diagnostics so callers can decide
     # whether to fail closed or accept reduced structural fidelity.
     for src_net in sorted(ledger.ipv4_collapsed_source_nets, key=str):
