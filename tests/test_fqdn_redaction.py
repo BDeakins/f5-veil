@@ -92,8 +92,15 @@ def test_fqdn_followed_by_underscore_index_substituted():
     sanitized, _ = substitute(src, ledger, diag)
     # FQDN is gone from BOTH the header path AND the compound filename.
     assert "host01.example.local" not in sanitized
-    # The trailing _<index>_<index> survives verbatim.
-    assert "FQDN_0001_69313_3" in sanitized
+    # The trailing _<index>_<index> survives verbatim. v1.2 Phase 3b
+    # added a colon-form path variant to substring sub, so
+    # ``:Common:host01.example.local`` matches as a whole path (longer
+    # than the inner FQDN) and substitutes via the UNK entry registered
+    # for ``/Common/host01.example.local`` by the ssl-cert top-level
+    # block. Either placeholder form (FQDN_NNNN or UNK_NNNN) is
+    # acceptable; assert the F5 file-storage suffix survives.
+    assert "_69313_3" in sanitized
+    assert ("FQDN_0001" in sanitized) or ("UNK_0001" in sanitized)
     restored = reverse_substitute(sanitized, ledger)
     assert restored == src
 

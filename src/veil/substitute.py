@@ -811,9 +811,54 @@ def _build_substring_render_map(
         by_first_char.setdefault(first, []).append(
             (entry.original, rendered, entry.placeholder, right_wc)
         )
+        # v1.2 Phase 3b — F5 filestore colon-separator variant. For
+        # path-shaped entries (entry.partition set), generate a
+        # ``:partition:leaf`` form so substring sub catches references
+        # in filestore paths like
+        # ``/config/filestore/files_d/Common_d/X_d/:Common:<leaf>_NNNN_N``.
+        # Uses relaxed right-boundary (drops ``_``) so the trailing
+        # ``_<index>_<index>`` filestore suffix doesn't block matches.
+        colon_variant = _colon_form_pair(entry, ledger)
+        if colon_variant is not None:
+            colon_orig, colon_rendered = colon_variant
+            by_first_char.setdefault(colon_orig[0], []).append(
+                (colon_orig, colon_rendered, entry.placeholder,
+                 _WORD_CHARS_FQDN_RIGHT)
+            )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
+
+
+def _colon_form_pair(entry: LedgerEntry, ledger: Ledger) -> tuple[str, str] | None:
+    """For a path-shaped entry, return the colon-separator variant
+    ``(:partition:leaf, :partition:placeholder)``. Returns None for
+    non-path entries (partition=None) or malformed paths.
+
+    Examples:
+    - entry.original=/Common/foo, partition=Common, placeholder=POOL_0001
+      → (":Common:foo", ":Common:POOL_0001")
+    - entry.original=/Tenant_A/foo, partition=Tenant_A,
+      placeholder=POOL_0001, PARTITION_0001=Tenant_A
+      → (":Tenant_A:foo", ":PARTITION_0001:POOL_0001")
+    """
+    if entry.partition is None:
+        return None
+    if not entry.original.startswith(f"/{entry.partition}/"):
+        return None
+    prefix_len = 1 + len(entry.partition) + 1  # ``/`` + part + ``/``
+    leaf = entry.original[prefix_len:]
+    if not leaf:
+        return None
+    colon_orig = f":{entry.partition}:{leaf}"
+    if entry.partition == COMMON_PARTITION:
+        colon_rendered = f":Common:{entry.placeholder}"
+    else:
+        part_ph = ledger.by_original.get((Kind.PARTITION, entry.partition))
+        if part_ph is None:
+            return None
+        colon_rendered = f":{part_ph}:{entry.placeholder}"
+    return colon_orig, colon_rendered
 
 
 def _right_word_chars_for_kind(kind: Kind) -> frozenset[str]:
@@ -852,6 +897,14 @@ def _build_substring_reverse_render_map(
         by_first_char.setdefault(first, []).append(
             (rendered, entry.original, right_wc)
         )
+        # v1.2 Phase 3b — colon-separator variant (reverse). Mirror
+        # _build_substring_render_map's filestore-path handling.
+        colon_variant = _colon_form_pair(entry, ledger)
+        if colon_variant is not None:
+            colon_orig, colon_rendered = colon_variant
+            by_first_char.setdefault(colon_rendered[0], []).append(
+                (colon_rendered, colon_orig, _WORD_CHARS_FQDN_RIGHT)
+            )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
