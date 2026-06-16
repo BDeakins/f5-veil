@@ -1,16 +1,24 @@
-"""Pass 1.7 — description body discovery.
+"""Pass 1.7 — description / caption / service-name body discovery.
 
 Walks the token stream after pass-1 and pass-1.5 but before ledger
-freeze, registering every ``description`` value as a ``Kind.DESC``
-entry. Pass-2 substitution then redacts the body to its placeholder.
+freeze, registering every value of a description-family field as a
+``Kind.DESC`` entry. Pass-2 substitution then redacts the body to
+its placeholder.
 
-Supported forms (v0.0.10):
+Description-family field names (v1.2):
+- ``description`` (original, v0.0.10)
+- ``caption`` (added v1.2, finding 13 — captions carry the same
+  free-text disclosure risk as descriptions)
+- ``service-name`` (added v1.2, finding 12c — referenced ACS service
+  names that don't otherwise register elsewhere)
 
-- ``description "quoted body"`` — QSTRING value. Most common in real
+Supported forms:
+
+- ``<field> "quoted body"`` — QSTRING value. Most common in real
   configs. Full byte-exact round-trip.
-- ``description bareword`` — single-WORD value. Full byte-exact
+- ``<field> bareword`` — single-WORD value. Full byte-exact
   round-trip.
-- ``description { braced body }`` — multi-line braced value. The full
+- ``<field> { braced body }`` — multi-line braced value. The full
   ``{...}`` span (including braces and inner whitespace) is stored as
   the entry's ``original``. Pass-2 emits ``"DESC_NNNN"`` (QSTRING form)
   in place; the reverse pass's qstring map restores the original
@@ -34,13 +42,21 @@ from .ledger import Kind, Ledger, Ref
 from .tokenizer import TokKind, tokenize
 
 
+_DESC_FIELDS = frozenset({
+    "description",
+    "caption",
+    "service-name",
+})
+
+
 def discover_descriptions(
     src: str,
     ledger: Ledger,
     diagnostics: Diagnostics,
 ) -> None:
-    """Pass 1.7 — walk ``src``, intern every ``description`` value into
-    the ledger as ``Kind.DESC``. Must run before ``ledger.freeze()``."""
+    """Pass 1.7 — walk ``src``, intern every description-family
+    field value into the ledger as ``Kind.DESC``. Must run before
+    ``ledger.freeze()``."""
     if ledger.frozen:
         raise RuntimeError(
             "description_discovery must run before ledger.freeze()"
@@ -53,7 +69,7 @@ def _walk_descriptions(src, tokens, ledger):
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok.kind != TokKind.WORD or tok.value != "description":
+        if tok.kind != TokKind.WORD or tok.value not in _DESC_FIELDS:
             i += 1
             continue
         if i + 1 >= len(tokens):

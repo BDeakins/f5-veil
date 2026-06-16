@@ -97,6 +97,11 @@ _WORD_CHARS_FQDN_RIGHT = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
+# v1.2 — description-family field names. Walker (pass-1.7) and
+# substitute side both gate on this set. Keep in sync with
+# ``_DESC_FIELDS`` in ``description_discovery.py``.
+_DESC_FIELDS = frozenset({"description", "caption", "service-name"})
+
 
 def substitute(
     src: str,
@@ -170,11 +175,15 @@ def substitute(
             cursor = last.offset + last.length
             i += 4
             continue
-        # ---- Description handling (TMSH context only, not inside iRule) ----
+        # ---- Description-family handling (TMSH context only, not inside iRule) ----
+        # v1.2: ``caption`` and ``service-name`` join ``description``
+        # under Kind.DESC. Same emission logic — the keyword is echoed
+        # verbatim and the value is substituted with a DESC_NNNN
+        # placeholder.
         if (
             rule_entry_depth is None
             and tok.kind == TokKind.WORD
-            and tok.value == "description"
+            and tok.value in _DESC_FIELDS
         ):
             consumed = _emit_description(
                 tokens, i, src, out, ledger, diagnostics,
