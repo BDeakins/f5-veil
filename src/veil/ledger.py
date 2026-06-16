@@ -176,6 +176,15 @@ class Kind(str, Enum):
     # ``/Common/SYSLOG_SERVER_NNNN``. Inner ``host`` field is already
     # caught by pass-1.5 IP literal walker; no secret-string body
     # fields exist in this block shape.
+    SSHD_BANNER = "SSHD_BANNER"  # Free-text value of ``banner-text``,
+    # ``pre-login-banner``, or ``post-login-banner`` inside
+    # ``sys sshd { ... }`` discovered by pass-1.85d (v1.2). Real-world
+    # banners frequently embed company name, legal jurisdiction, or
+    # operations contact info. Multi-line QSTRING values are captured
+    # by the tokenizer as a single QSTRING token whose content
+    # includes embedded newlines; substring-sub substitution finds
+    # the bare content (no surrounding quotes) inside any QSTRING
+    # and replaces with bare-placeholder ``SSHD_BANNER_NNNN``.
 
 
 _RFC5737_NETWORKS = (

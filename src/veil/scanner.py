@@ -40,6 +40,7 @@ from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .snmp_discovery import discover_snmp
+from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
 from .tokenizer import Token, TokKind, tokenize
 
@@ -173,6 +174,11 @@ def scan(
     # reason as ``sys snmp``. Inner ``host`` field already caught by
     # pass-1.5; no secret-bearing body fields exist.
     discover_syslog(src, ledger, diagnostics)
+    # Pass 1.85d — ``sys sshd`` banner walker (v1.2). Banner text
+    # (``banner-text`` / ``pre-login-banner`` / ``post-login-banner``)
+    # is multi-line free-text that customers frequently use to embed
+    # company name, legal jurisdiction, or contact info.
+    discover_sshd_banners(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
