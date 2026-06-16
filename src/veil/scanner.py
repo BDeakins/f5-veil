@@ -41,6 +41,7 @@ from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
+from .krb_realm_discovery import discover_krb_realms
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
@@ -208,6 +209,12 @@ def scan(
     # redacted them). Public-internet FQDNs (``vendor.example.com``)
     # pass through.
     discover_fqdns(src, ledger, diagnostics)
+    # Pass 2.1 — Kerberos realm walker (v1.2). Catches public-TLD
+    # realms (``ACME.CORP``, ``BOGUS.COM``) that the FQDN walker
+    # skips by design. Runs AFTER FQDN so the dedup short-circuit
+    # sees internal-suffix realms (``ACME.LOCAL``) already registered
+    # as FQDN entries.
+    discover_krb_realms(src, ledger, diagnostics)
     return ledger, diagnostics
 
 

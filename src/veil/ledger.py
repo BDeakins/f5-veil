@@ -214,6 +214,16 @@ class Kind(str, Enum):
     # WORD; TMSH literal keywords (``none``, ``default``, ``any``,
     # etc.) and path-shaped values are skipped. Stored bare with
     # ``partition=None``; substring-sub renders ``USERNAME_NNNN``.
+    KRB_REALM = "KRB_REALM"  # Kerberos realm value (e.g.
+    # ``ACME.CORP``, ``BOGUS.COM``) attached to a ``realm`` field
+    # inside ``apm sso kerberos`` / ``apm aaa kerberos`` blocks,
+    # discovered by pass-1.85h (v1.2). Match is ALL-UPPERCASE
+    # dot-delimited shape — covers public-TLD realms that the FQDN
+    # walker skips by design. Realms with internal-suffix top labels
+    # (``ACME.LOCAL``) are already caught by FQDN; this walker
+    # short-circuits if the value is already in the ledger under
+    # another kind. Stored bare with ``partition=None``; substring-
+    # sub renders ``KRB_REALM_NNNN``.
 
 
 _RFC5737_NETWORKS = (
