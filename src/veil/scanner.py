@@ -40,6 +40,7 @@ from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .snmp_discovery import discover_snmp
+from .syslog_discovery import discover_syslog
 from .tokenizer import Token, TokKind, tokenize
 
 _TWO_WORD_KINDS = MappingProxyType({
@@ -167,6 +168,11 @@ def scan(
     # all leaked verbatim because ``sys snmp`` lands in
     # ``_record_unknown_top_level`` and pass-1 skips its body.
     discover_snmp(src, ledger, diagnostics)
+    # Pass 1.85c — ``sys syslog`` body walker (v1.2). Pre-v1.2 the
+    # remote-server bucket headers leaked verbatim for the same
+    # reason as ``sys snmp``. Inner ``host`` field already caught by
+    # pass-1.5; no secret-bearing body fields exist.
+    discover_syslog(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

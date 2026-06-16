@@ -166,6 +166,16 @@ class Kind(str, Enum):
     # ``sys-location`` field inside ``sys snmp { ... }`` (physical /
     # logical device location). Same form, same substitution model
     # as ``Kind.SYS_CONTACT``.
+    SYSLOG_SERVER = "SYSLOG_SERVER"  # Bucket header path of a syslog
+    # remote-server destination inside
+    # ``sys syslog { remote-servers { ... } }`` discovered by
+    # pass-1.85c (v1.2). Pre-v1.2 these names leaked verbatim because
+    # ``sys syslog`` lands in ``_record_unknown_top_level`` and pass-1
+    # skips its body. Path-shaped registration; pass-2's generic
+    # WORD-token full-match path substitutes ``/Common/<name>`` →
+    # ``/Common/SYSLOG_SERVER_NNNN``. Inner ``host`` field is already
+    # caught by pass-1.5 IP literal walker; no secret-string body
+    # fields exist in this block shape.
 
 
 _RFC5737_NETWORKS = (
