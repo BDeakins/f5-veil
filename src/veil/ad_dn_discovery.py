@@ -168,9 +168,19 @@ def _intern_bareword_dn(value_tok, ledger: Ledger) -> None:
 
 
 def _qualifies_as_ad_dn(dn: str) -> bool:
-    """Require at least one ``CN=`` and at least one ``DC=`` RDN to
-    qualify — this filters out random ``key=value,key=value`` strings
-    (HTTP header parameters, SQL fragments, etc.) that share the
-    syntactic shape but aren't AD DNs."""
-    upper = dn.upper()
-    return "CN=" in upper and "DC=" in upper
+    """Require at least one ``DC=`` RDN to qualify — the regex
+    already enforces the multi-RDN shape (at least two
+    attribute=value pairs separated by commas), and the attribute
+    allowlist (``CN|OU|DC|O|L|C|ST|UID|emailAddress``) sharply
+    gates false positives. The DC= requirement is the AD-specific
+    anchor.
+
+    v1.2 update: previously required both CN= AND DC=. That over-
+    rejected legitimate DNs like
+    ``OU=Service Accounts,OU=User Accounts,DC=Foo,DC=local`` (LDAP
+    monitor `base` field values), which carry the OU hierarchy
+    structure — VERY identifying — even without a CN= prefix.
+    Dropping the CN= requirement catches the whole-DN shape so
+    substring sub redacts the OU prefix together with the DC suffix
+    as one placeholder."""
+    return "DC=" in dn.upper()

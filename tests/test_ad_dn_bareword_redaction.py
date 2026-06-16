@@ -156,6 +156,66 @@ def test_qstring_walker_still_works():
 # ---------- multiple base-dn fields, distinct values ----------
 
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    "ous,full_dn",
+    [
+        # 0 OUs (just DC) — handled by Phase 2c bareword path; this
+        # parameterized case here covers the QSTRING walker too.
+        (
+            "0 OUs",
+            "DC=acme,DC=local",
+        ),
+        (
+            "1 OU",
+            "OU=Users,DC=acme,DC=local",
+        ),
+        (
+            "2 OUs",
+            "OU=Service Accounts,OU=User Accounts,DC=acme,DC=local",
+        ),
+        (
+            "3 OUs",
+            "OU=Service,OU=Apps,OU=Tenant,DC=acme,DC=corp,DC=local",
+        ),
+        (
+            "4 OUs",
+            "OU=Region,OU=Site,OU=Service,OU=Tenant,DC=acme,DC=local",
+        ),
+    ],
+    ids=["0_ous", "1_ou", "2_ous", "3_ous", "4_ous"],
+)
+def test_ou_prefix_dn_qstring_fully_redacted(ous, full_dn):
+    """v1.2 follow-up to user feedback on phase3b sanitized output:
+    QSTRING DN values with any number of OU prefixes (0, 1, 2, 3,
+    or more) followed by a DC suffix must be redacted as a whole.
+    Previously the QSTRING walker required CN= AND DC=, so OU
+    structure leaked verbatim alongside a correctly-redacted DC
+    tail. Now the whole DN is interned and substituted as a single
+    placeholder.
+
+    Real-corpus example (the trigger): ``base "OU=Service Accounts,
+    OU=User Accounts,DC=Babylon,DC=local"`` inside ``ltm monitor
+    ldap``."""
+    src = (
+        "ltm monitor ldap /Common/m {\n"
+        f'    base "{full_dn}"\n'
+        "}\n"
+    )
+    ledger, diag = scan(src)
+    assert (Kind.AD_GROUP_DN, full_dn) in ledger.by_original
+    sanitized, _diag = substitute(src, ledger, diag)
+    # Every OU and DC token from the source DN is gone.
+    for rdn in full_dn.split(","):
+        assert rdn not in sanitized, (
+            f"RDN {rdn!r} leaked through for case {ous}"
+        )
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
 def test_multiple_base_dn_fields_distinct():
     src = (
         "apm aaa ldap /Common/a {\n"

@@ -160,19 +160,28 @@ def test_partial_dn_without_dc_does_not_qualify():
     assert "CN=foo" in sanitized
 
 
-def test_dn_without_cn_does_not_qualify():
-    """An OU/DC-only string lacks the CN= leaf required to qualify as
-    an AD group / user DN."""
+def test_dn_without_cn_qualifies_v1_2():
+    """v1.2 relaxation: OU+DC (no CN=) shapes NOW qualify as an
+    AD DN — the OU prefix carries identifying tenant-structure
+    information. Pre-v1.2 the QSTRING walker required CN= AND DC=,
+    causing leaks like
+    ``base "OU=Service Accounts,OU=User Accounts,DC=Foo,DC=local"``
+    where the OU prefix passed through verbatim alongside a
+    correctly-redacted DC suffix. Now the whole DN is interned and
+    substituted as a single placeholder."""
     src = (
         "apm policy access-policy /Common/p1 {\n"
         '    expression "OU=Groups,DC=corp,DC=example,DC=com"\n'
         "}\n"
     )
     ledger, diag = scan(src)
+    assert (
+        Kind.AD_GROUP_DN,
+        "OU=Groups,DC=corp,DC=example,DC=com",
+    ) in ledger.by_original
     sanitized, _ = substitute(src, ledger, diag)
-    assert not any(
-        e.kind == Kind.AD_GROUP_DN for e in ledger.entries.values()
-    )
+    assert "OU=Groups" not in sanitized
+    assert "DC=corp" not in sanitized
 
 
 def test_dn_with_lowercase_cn_qualifies():
