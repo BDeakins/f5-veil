@@ -40,6 +40,7 @@ from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .cert_keychain_discovery import discover_cert_keychains
+from .client_policy_discovery import discover_client_policies
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
@@ -185,6 +186,11 @@ def scan(
     # body is composed from cert + root-CA filenames; pass-1 brace-
     # skips the PROFILE body so the nested bucket-name leaks.
     discover_cert_keychains(src, ledger, diagnostics)
+    # Pass 1.85f — ``client-policy`` nested bucket walker (v1.2).
+    # Same shape as cert-key-chain: nested bareword inside a profile
+    # body that pass-1 brace-skips. Observed inside
+    # ``apm profile connectivity``.
+    discover_client_policies(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

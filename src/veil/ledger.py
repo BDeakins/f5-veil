@@ -198,6 +198,15 @@ class Kind(str, Enum):
     # ``key`` field values reference cert paths from ``sys file ssl-*``
     # top-level blocks already registered as ``Kind.UNKNOWN``, and
     # substitute via the existing UNK substring sub.
+    CLIENT_POLICY = "CLIENT_POLICY"  # Bareword bucket identifier
+    # inside an ``apm profile connectivity { client-policy { ... } }``
+    # nested object body (and adjacent profile families), discovered
+    # by pass-1.85f (v1.2). Same root-cause family as
+    # ``Kind.CERT_KEY_CHAIN``: the enclosing profile body is brace-
+    # skipped so the nested bucket name (typically derived from the
+    # connectivity profile name itself) leaks verbatim. Stored as
+    # bare bareword with ``partition=None``; substring-sub renders
+    # ``CLIENT_POLICY_NNNN``.
 
 
 _RFC5737_NETWORKS = (
