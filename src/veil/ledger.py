@@ -185,6 +185,19 @@ class Kind(str, Enum):
     # includes embedded newlines; substring-sub substitution finds
     # the bare content (no surrounding quotes) inside any QSTRING
     # and replaces with bare-placeholder ``SSHD_BANNER_NNNN``.
+    CERT_KEY_CHAIN = "CERT_KEY_CHAIN"  # Bareword bucket identifier
+    # inside an ``ltm profile client-ssl { cert-key-chain { ... } }``
+    # nested object body, discovered by pass-1.85e (v1.2). The
+    # ``cert-key-chain`` block lives inside a KNOWN top-level kind
+    # (``ltm profile client-ssl`` → ``Kind.PROFILE``) whose body the
+    # main pass-1 loop brace-counts and skips — so the inner bucket
+    # bareword identifier (typically composed from cert / root-CA
+    # filenames) leaks verbatim. Stored as bare bareword value with
+    # ``partition=None``; substring-sub renders bare placeholder
+    # ``CERT_KEY_CHAIN_NNNN``. The bucket body's ``cert`` / ``chain`` /
+    # ``key`` field values reference cert paths from ``sys file ssl-*``
+    # top-level blocks already registered as ``Kind.UNKNOWN``, and
+    # substitute via the existing UNK substring sub.
 
 
 _RFC5737_NETWORKS = (
