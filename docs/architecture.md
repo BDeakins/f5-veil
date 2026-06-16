@@ -588,6 +588,53 @@ recorded `sources` list in the answer file.
 - **UCS archive ingestion** — landed in v1.2. Extract-only by
   design; see "UCS archive ingestion" section above for the
   threat model and allowlist rationale.
+- **v1.2 leak-coverage hardening** — landed in v1.2 (Phases 1–4 of
+  the leak fix plan, 19 finding-groups). Adds 26 new Kinds:
+  - **Unknown-block body walkers** — `sys snmp` (5 kinds), `sys
+    syslog`, `sys sshd` banner, `cert-key-chain` nested bucket,
+    `client-policy` nested bucket.
+  - **Cross-cutting field walkers** — identity/hostname
+    (`admin-name`, `basic-auth-username`, `user`, `account-name`,
+    `server-name` → USERNAME), Kerberos realm (`realm` upper-case
+    → KRB_REALM), LDAP base-DN bareword (extends AD_GROUP_DN),
+    LDAP filter, SAML/OAuth identifiers (entity-id, sso-uri,
+    slo-uri, slo-response-uri, audience, issuer, key-id),
+    description-family (caption, service-name folded into DESC),
+    monitor recv, data-group records.
+  - **Substring sub fixes** — IP-walker version-field exclusion
+    (pass-1.5 skips `version 17.5.1.5` shape), filestore
+    colon-separator variant (substring sub now catches
+    `:Common:<leaf>_<index>_<index>` filestore references).
+  - **Orphan check** — substring-shadow exemption so the FQDN
+    walker's inner-FQDN entries shadowed by longer SAML/OAuth
+    entries don't trip the cross-reference integrity assertion.
+- **v1.2 documented gaps (NOT auto-redacted, operator review
+  required):**
+  - **iRule `varname` / variable name customer leak** — user-chosen
+    Tcl variable names (e.g. `set acme_session_id ...`) can embed
+    company names. Renaming would break positional references
+    inside the iRule, so VEIL does not redact varnames automatically.
+    Operator-side mitigation: review variable names before sending
+    sanitized config to an LLM; rename in source config if needed.
+  - **Public-TLD FQDNs outside data-group records context.** The
+    global FQDN walker only catches internal-suffix FQDNs
+    (`.local`, `.corp`, `.lan`, etc.) to avoid false positives on
+    legitimate public DNS references (CDN, SaaS endpoints).
+    Customer FQDNs with public TLDs in fields not covered by the
+    Phase 2 dedicated walkers (entity-id, audience, etc.) — for
+    example a `source-path /config/ssl/ssl.csr/<fqdn>.com` value —
+    pass through. Operator-side mitigation: review sanitized output
+    for known customer-domain root-labels.
+  - **Tcl expression literal customer-domain leak.** iRule
+    expression QSTRINGs like `expression "return {acme}"` where
+    `{acme}` is a literal Tcl variable reference to a customer
+    domain root-label fall outside the regex / FQDN / substring
+    machinery (no dotted-suffix shape to lock onto). Operator-side
+    mitigation: review expression bodies.
+  - **`basic-auth-realm` bareword.** Single-word values in the
+    `basic-auth-realm` field can leak company / tenant names; not
+    in the v1.2 USERNAME walker's allowlist (added in v1.3 if a
+    real-world report surfaces).
 - **Personal-use Docker + FastAPI web wrapper** (v1.3). See threat
   model below for why this is distinct from a hardened service.
 - **Persistent cross-run identifier map** (v2.0).
