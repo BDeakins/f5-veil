@@ -271,6 +271,18 @@ class Kind(str, Enum):
     # bare with ``partition=None``; substring-sub renders
     # ``MONITOR_RECV_NNNN``. Matches ``recv`` EXACT (not ``recv-disable``
     # or ``recv-row``).
+    DATA_GROUP_RECORD = "DATA_GROUP_RECORD"  # Record bucket header
+    # inside ``ltm data-group internal /Common/<name> { records { ... }
+    # }``, discovered by pass-1.85l (v1.2). Context-gated walker —
+    # bucket names in data-group records bodies are operator-chosen
+    # lookup keys (typically FQDNs, URLs, or IP addresses used for
+    # iRule lookups), highly likely to be customer-sensitive. The
+    # context gate replaces the global FQDN walker's TLD allowlist
+    # check, which by design skips public-TLD FQDNs to avoid
+    # false-positives on legitimate references — inside data-group
+    # records, every entry is identifying. Stored bare with
+    # ``partition=None``; substring-sub renders
+    # ``DATA_GROUP_RECORD_NNNN``.
 
 
 _RFC5737_NETWORKS = (

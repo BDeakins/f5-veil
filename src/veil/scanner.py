@@ -41,6 +41,7 @@ from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
+from .data_group_records_discovery import discover_data_group_records
 from .krb_realm_discovery import discover_krb_realms
 from .ldap_filter_discovery import discover_ldap_filters
 from .monitor_recv_discovery import discover_monitor_recv
@@ -214,6 +215,11 @@ def scan(
     # the ``recv`` field inside LTM/GTM monitor blocks as
     # ``Kind.MONITOR_RECV``.
     discover_monitor_recv(src, ledger, diagnostics)
+    # Pass 1.85l — Data-group records walker (v1.2). Context-gated
+    # to ``ltm data-group internal/external`` records bodies; interns
+    # each non-path bareword bucket header as
+    # ``Kind.DATA_GROUP_RECORD``.
+    discover_data_group_records(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
