@@ -234,6 +234,29 @@ class Kind(str, Enum):
     # customer-identifying information; treated as opaque (whole
     # value redacted). Stored bare with ``partition=None``;
     # substring-sub renders ``LDAP_FILTER_NNNN``.
+    SAML_ENTITY_ID = "SAML_ENTITY_ID"  # Value of ``entity-id`` field
+    # inside SAML SP/IdP blocks, discovered by pass-1.85j (v1.2). May
+    # be a URL, a URN, or an opaque string; whole value interned to
+    # avoid leaking sub-paths that the FQDN walker doesn't reach
+    # (``https://idp.acme.local/ark-ipmi`` → entire URL redacted, not
+    # just the FQDN portion). Substring-sub renders
+    # ``SAML_ENTITY_ID_NNNN``. Double-tokenization with FQDN walker is
+    # accepted: SAML walker runs first; FQDN walker may register the
+    # inner FQDN separately; substring-sub longest-match-first then
+    # picks the SAML entry for the full URL.
+    SAML_SSO_URI = "SAML_SSO_URI"  # Value of ``sso-uri`` field. Same
+    # semantics and substitution model as ``Kind.SAML_ENTITY_ID``.
+    SAML_SLO_URI = "SAML_SLO_URI"  # Value of ``single-logout-uri``
+    # field. Same semantics as ``Kind.SAML_ENTITY_ID``.
+    SAML_SLO_RESPONSE_URI = "SAML_SLO_RESPONSE_URI"  # Value of
+    # ``single-logout-response-uri`` field. Same semantics.
+    OAUTH_AUDIENCE = "OAUTH_AUDIENCE"  # Value(s) of ``audience``
+    # field inside ``apm oauth oauth-provider`` and adjacent blocks,
+    # discovered by pass-1.85j. The braced-list form
+    # ``audience { url1 url2 ... }`` interns each list element
+    # separately. Same substitution model as ``Kind.SAML_ENTITY_ID``.
+    OAUTH_ISSUER = "OAUTH_ISSUER"  # Value of ``issuer`` field.
+    # Same semantics as ``Kind.SAML_ENTITY_ID``.
 
 
 _RFC5737_NETWORKS = (

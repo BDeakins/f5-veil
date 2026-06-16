@@ -43,6 +43,7 @@ from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
 from .krb_realm_discovery import discover_krb_realms
 from .ldap_filter_discovery import discover_ldap_filters
+from .saml_oauth_discovery import discover_saml_oauth
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
@@ -203,6 +204,11 @@ def scan(
     # flavoured top-level blocks; interns ``filter <value>`` pairs
     # as ``Kind.LDAP_FILTER``.
     discover_ldap_filters(src, ledger, diagnostics)
+    # Pass 1.85j — SAML / OAuth identifier field walker (v1.2). Runs
+    # BEFORE the FQDN walker so longest-match-first substring sub at
+    # substitution time picks the full-URL SAML_ENTITY_ID over the
+    # inner FQDN (user explicitly approved double-tokenization).
+    discover_saml_oauth(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

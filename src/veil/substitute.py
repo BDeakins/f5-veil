@@ -459,7 +459,19 @@ def _check_orphan_entries(ledger: Ledger, diagnostics: Diagnostics) -> None:
     ``/Common/<ip>`` as both NODE and VADDR for the same address).
     Pass-2's Kind-iteration order picks one, leaving the other unused.
     That's not a parser gap — the path WAS substituted, just via the
-    other entry — so we don't flag it as an orphan."""
+    other entry — so we don't flag it as an orphan.
+
+    Substring-shadow exemption (v1.2): when the SAML/OAuth walker
+    (pass-1.85j) interns a full URL like
+    ``https://idp.example.local/svc`` and the FQDN walker (pass-2.0)
+    independently registers the inner ``idp.example.local``,
+    longest-match-first substring substitution picks the full URL
+    everywhere — leaving the inner FQDN entry orphan IF it doesn't
+    appear anywhere outside the URL. That's a designed consequence
+    of the user-approved double-tokenization model, not a parser
+    gap. So an entry whose original is a strict substring of some
+    REFERENCED entry's original is exempted from orphan reporting.
+    """
     referenced_originals: set[str] = set()
     for entry in ledger.entries.values():
         if entry.references:
@@ -469,7 +481,23 @@ def _check_orphan_entries(ledger: Ledger, diagnostics: Diagnostics) -> None:
             continue
         if entry.original in referenced_originals:
             continue
+        # Substring-shadow exemption — see docstring.
+        if _is_substring_of_any(entry.original, referenced_originals):
+            continue
         diagnostics.orphan_entries.append(placeholder)
+
+
+def _is_substring_of_any(needle: str, originals: set[str]) -> bool:
+    """Return True if ``needle`` is a strict substring of any item in
+    ``originals``. Identity matches are NOT counted (that case is
+    handled by the ``entry.original in referenced_originals`` check
+    above)."""
+    if not needle:
+        return False
+    for s in originals:
+        if len(s) > len(needle) and needle in s:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------
