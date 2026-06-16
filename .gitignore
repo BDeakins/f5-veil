@@ -8,6 +8,7 @@
 *.restored.conf
 test_configs/customer/
 test_configs/real/
+test_configs/_phase_verify/
 *.ucs
 
 # ============================================================================

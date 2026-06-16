@@ -74,13 +74,19 @@ _DN_RE = re.compile(
 )
 
 
+_BASE_DN_FIELDS = frozenset({"base-dn", "search-base-dn", "search-dn"})
+
+
 def discover_ad_dns(
     src: str,
     ledger: Ledger,
     diagnostics=None,  # noqa: ARG001 — symmetry with sibling passes
 ) -> None:
     """Pass 1.9 — intern every distinct AD / LDAP DN substring found
-    inside any QSTRING. Must run before ``ledger.freeze()``.
+    inside any QSTRING. Also walk field-gated barewords for
+    ``base-dn`` / ``search-base-dn`` / ``search-dn`` whose value is a
+    bareword DN (v1.2 Phase 2c extension). Must run before
+    ``ledger.freeze()``.
 
     ``diagnostics`` is accepted for signature symmetry; no current failure
     mode warrants a diagnostic field (DNs missed by the regex would
@@ -91,7 +97,9 @@ def discover_ad_dns(
         raise RuntimeError(
             "ad_dn_discovery must run before ledger.freeze()"
         )
-    for tok in tokenize(src):
+    tokens = list(tokenize(src))
+    # Pass A: QSTRING content scan (original v0.0.13 behaviour).
+    for tok in tokens:
         if tok.kind != TokKind.QSTRING:
             continue
         # Skip QSTRINGs that pass-1.7 already interned as descriptions —
@@ -101,8 +109,6 @@ def discover_ad_dns(
         # orphan diagnostic.
         if (Kind.DESC, tok.value) in ledger.by_original:
             continue
-        # Strip the wrapping quotes; the regex would also match inside
-        # them but starting from the inner content keeps offsets clean.
         if len(tok.value) < 2:
             continue
         content = tok.value[1:-1]
@@ -117,6 +123,48 @@ def discover_ad_dns(
                 line=tok.line,
             )
             ledger.intern(Kind.AD_GROUP_DN, dn, ref, partition=None)
+    # Pass B (v1.2 Phase 2c): field-gated bareword DN walk.
+    # ``base-dn DC=Foo,DC=local`` shape. Field-name context guarantees
+    # the value IS an LDAP DN, so the CN+DC qualifier check is
+    # skipped — a base-dn legitimately has no CN.
+    n = len(tokens)
+    i = 0
+    while i < n:
+        tk = tokens[i]
+        if (
+            tk.kind == TokKind.WORD
+            and tk.value in _BASE_DN_FIELDS
+            and i + 1 < n
+            and tokens[i + 1].kind == TokKind.WORD
+        ):
+            value_tok = tokens[i + 1]
+            if _is_dn_shaped(value_tok.value):
+                _intern_bareword_dn(value_tok, ledger)
+            i += 2
+            continue
+        i += 1
+
+
+def _is_dn_shaped(value: str) -> bool:
+    """A bareword qualifies as a DN if it matches the DN regex spanning
+    the full string and contains at least one ``DC=`` (LDAP base-DNs
+    don't require a ``CN=`` so the regular ``_qualifies_as_ad_dn``
+    over-rejects)."""
+    m = _DN_RE.match(value)
+    if not m or m.end() != len(value):
+        return False
+    return "DC=" in value.upper()
+
+
+def _intern_bareword_dn(value_tok, ledger: Ledger) -> None:
+    if (Kind.AD_GROUP_DN, value_tok.value) in ledger.by_original:
+        return
+    ref = Ref(
+        byte_offset=value_tok.offset,
+        length=value_tok.length,
+        line=value_tok.line,
+    )
+    ledger.intern(Kind.AD_GROUP_DN, value_tok.value, ref, partition=None)
 
 
 def _qualifies_as_ad_dn(dn: str) -> bool:
