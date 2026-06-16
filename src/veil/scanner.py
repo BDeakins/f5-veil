@@ -42,6 +42,7 @@ from .remote_role_discovery import discover_remote_roles
 from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
 from .krb_realm_discovery import discover_krb_realms
+from .ldap_filter_discovery import discover_ldap_filters
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
@@ -198,6 +199,10 @@ def scan(
     # ``user``, ``account-name``, ``server-name``) intern the
     # value as ``Kind.USERNAME``.
     discover_usernames(src, ledger, diagnostics)
+    # Pass 1.85i — LDAP filter walker (v1.2). Context-gated to LDAP-
+    # flavoured top-level blocks; interns ``filter <value>`` pairs
+    # as ``Kind.LDAP_FILTER``.
+    discover_ldap_filters(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.

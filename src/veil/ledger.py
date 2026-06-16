@@ -224,6 +224,16 @@ class Kind(str, Enum):
     # short-circuits if the value is already in the ledger under
     # another kind. Stored bare with ``partition=None``; substring-
     # sub renders ``KRB_REALM_NNNN``.
+    LDAP_FILTER = "LDAP_FILTER"  # LDAP filter expression value
+    # (e.g. ``sAMAccountName=foo``, ``(&(objectClass=user)(...))``)
+    # attached to a ``filter`` field inside an LDAP-flavoured block,
+    # discovered by pass-1.85i (v1.2). Context-gated to top-level
+    # blocks ``apm aaa ldap`` / ``apm aaa active-directory`` /
+    # ``auth ldap`` / ``auth active-directory`` / ``ltm monitor
+    # ldap``. Filter values may embed usernames or other
+    # customer-identifying information; treated as opaque (whole
+    # value redacted). Stored bare with ``partition=None``;
+    # substring-sub renders ``LDAP_FILTER_NNNN``.
 
 
 _RFC5737_NETWORKS = (
