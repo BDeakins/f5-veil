@@ -86,6 +86,46 @@ Skipped: TMSH wildcards (`0.0.0.0`, `::`, `any`, `any6`); IPv4 netmasks
 verbatim by pass 2 and surfaced via `qstring_contains_identifier`); IPs
 inside `description` values (surfaced via `unredacted_description`).
 
+v1.2 added a field-name allowlist exclusion: IP-shaped values that
+immediately follow `version` / `tmsh-version` / `software-version` /
+`bios-version` / `module-version` / `build-version` pass through
+verbatim. Adjacency is broken by any non-WORD token, so
+list-shape values still get IP-scanned correctly.
+
+### Pass 1.85 family — v1.2 leak-coverage hardening passes
+
+Each pass below runs between pass 1.5 and pass 2.0 (and before
+ledger freeze). They share a structural pattern: walk the token
+stream a second time, find specific named blocks or field-name
+contexts whose contents the main pass-1 loop brace-skipped, and
+intern their identifying values into the ledger so pass-2's
+existing substitution machinery (full-match path-shape OR
+substring sub) handles the mutation.
+
+| Pass | File | Closes |
+|------|------|--------|
+| 1.85 | `remote_role_discovery.py` | `auth remote-role role-info` bucket headers (`Kind.REMOTE_ROLE`) |
+| 1.85b | `snmp_discovery.py` | `sys snmp` bodies — communities / traps / sys-contact / sys-location |
+| 1.85c | `syslog_discovery.py` | `sys syslog remote-servers` bucket headers |
+| 1.85d | `sshd_discovery.py` | `sys sshd` banner-text / pre-login-banner / post-login-banner |
+| 1.85e | `cert_keychain_discovery.py` | nested `cert-key-chain { <bucket> { ... } }` bareword bucket names inside `ltm profile client-ssl` |
+| 1.85f | `client_policy_discovery.py` | nested `client-policy { <bucket> { ... } }` bareword bucket names inside APM profile bodies |
+| 1.85g | `username_discovery.py` | identity / hostname field-name allowlist → `Kind.USERNAME` |
+| 1.85h (pass 2.1) | `krb_realm_discovery.py` | uppercase Kerberos realm values that the FQDN walker skips by design (public TLDs) |
+| 1.85i | `ldap_filter_discovery.py` | `filter` field inside LDAP-flavoured top-level blocks → `Kind.LDAP_FILTER` |
+| 1.85j | `saml_oauth_discovery.py` | 6 SAML / OAuth identifier field names → dedicated kinds; runs BEFORE FQDN so longest-match-first picks the full-URL placeholder over inner FQDN |
+| 1.85k | `monitor_recv_discovery.py` | `recv` field (exact match, not `recv-disable`) inside monitor blocks → `Kind.MONITOR_RECV` |
+| 1.85l | `data_group_records_discovery.py` | `records` bucket headers inside `ltm data-group internal/external` — context-gated so public-TLD records get caught |
+| 1.85m | `apm_var_literal_discovery.py` | `expression "return {LITERAL}"` Tcl pattern in APM `variable-assign` bodies |
+
+Pass 1.9 (`ad_dn_discovery.py`, AD/LDAP DN extraction inside
+QSTRINGs) and pass 2.0 (`fqdn_discovery.py`, internal-FQDN
+discovery) predate v1.2 but were extended in v1.2: pass 1.9 added
+a bareword pass-B for `base-dn` / `search-base-dn` / `search-dn`
+fields and relaxed the qualifier to accept OU+DC-only DNs;
+pass 2.0 collaborates with pass-1.85j via longest-match-first
+during substring sub.
+
 ### Pass 2 — substitution (`veil.substitute.substitute`)
 
 1. Walk the same token stream and emit each token's bytes verbatim,
@@ -109,6 +149,27 @@ inside `description` values (surfaced via `unredacted_description`).
    than fall back to the literal partition name (which would leak).
 7. The leak detector (separate PR) runs over the sanitized output as
    the last line of defense.
+8. **v1.2 substring-sub variants** — `_build_substring_render_map`
+   (and reverse) generate two extra variants per path-shape entry:
+   - **Colon-form** `:partition:leaf` covers F5 filestore references
+     like `:Common:<leaf>_<index>_<index>` that the slash-form
+     substring sub missed.
+   - **FQDN-shaped leaf form** (when leaf is `host.example.com` and
+     the FQDN walker hasn't already registered it — i.e. public-TLD
+     leafs) covers bare leaf references in file paths like
+     `source-path /config/ssl/ssl.csr/<fqdn>.com`. The bare
+     placeholder `UNK_NNNN` substitutes; longer slash / colon forms
+     still win in their own contexts via longest-match-first.
+
+   Both variants use a relaxed right-boundary char set (drops `_`)
+   so trailing F5 file-storage index suffixes don't block matches.
+9. **Substring-shadow exemption** in the orphan check —
+   `_check_orphan_entries` exempts ledger entries whose `original`
+   is a strict substring of some REFERENCED entry's `original`. This
+   covers the SAML/OAuth ↔ FQDN double-tokenization case: SAML
+   walker registers the full URL, FQDN walker registers the inner
+   FQDN, longest-match-first picks the SAML entry everywhere — the
+   FQDN entry is intentionally orphan (not a parser gap).
 
 #### Path-piece rendering
 
@@ -156,9 +217,46 @@ Type-prefixed counters, 4-digit zero-padded from v1.0:
 | `FIREWALL_RULE_LIST` | `FIREWALL_RULE_LIST_0001` | `/Common/customer_rl` (`security firewall rule-list`) |
 | `FIREWALL_ADDRESS_LIST` | `FIREWALL_ADDRESS_LIST_0001` | `/Common/customer_addrs` (`security firewall address-list`) |
 | `FIREWALL_PORT_LIST` | `FIREWALL_PORT_LIST_0001` | `/Common/customer_ports` (`security firewall port-list`) |
+| `UNK` | `UNK_0001` | `/Common/foo` for top-level blocks of unrecognised kinds (e.g. `sys file ssl-cert /Common/foo`) — best-effort registration so substring sub catches them in body references |
 
-Future kinds in scope for v1.0: `DG`, `ASMPOL`, `GTM_POOL`, `GTM_DC`,
-`WIP`, `VLAN`, `CERT_CN`, plus profile/SNAT/route-domain kinds.
+### Free-text kinds added v0.0.10 – v1.2
+
+| Kind | Placeholder | Example original |
+|------|-------------|------------------|
+| `IRULE_COMMENT` | `IRULE_COMMENT_0001` (rendered as `# IRULE_COMMENT_0001` COMMENT token) | `# customer config note` inside `ltm rule` body |
+| `AD_GROUP_DN` | `AD_GROUP_DN_0001` | `CN=Admins,DC=corp,DC=example,DC=com` (also `OU=...,DC=...` from v1.2) |
+| `FQDN` | `FQDN_0001` | `host01.example.local` (internal-suffix only; public TLDs handled by dedicated kinds) |
+| `REMOTE_ROLE` | `REMOTE_ROLE_0001` | `/Common/F5_Admins` inside `auth remote-role role-info` |
+
+### v1.2 leak-coverage kinds
+
+Added by the v1.2 leak-coverage hardening cycle. See `CHANGELOG.md`
+for the per-walker rationale.
+
+| Kind | Placeholder | Example original / context |
+|------|-------------|------------------|
+| `SNMP_COMMUNITY` | `SNMP_COMMUNITY_0001` | `/Common/iComm_1` bucket in `sys snmp { communities { ... } }` |
+| `SNMP_TRAP` | `SNMP_TRAP_0001` | `/Common/iTrap_1` bucket in `sys snmp { traps { ... } }` |
+| `SNMP_COMMUNITY_SECRET` | `SNMP_COMMUNITY_SECRET_0001` | plaintext community string from `community-name` (communities) or `community` (traps) fields |
+| `SYS_CONTACT` | `SYS_CONTACT_0001` | value of `sys-contact` inside `sys snmp` |
+| `SYS_LOCATION` | `SYS_LOCATION_0001` | value of `sys-location` inside `sys snmp` |
+| `SYSLOG_SERVER` | `SYSLOG_SERVER_0001` | `/Common/loghost` bucket in `sys syslog { remote-servers { ... } }` |
+| `SSHD_BANNER` | `SSHD_BANNER_0001` | `banner-text` / `pre-login-banner` / `post-login-banner` value inside `sys sshd` (multi-line QSTRING supported) |
+| `CERT_KEY_CHAIN` | `CERT_KEY_CHAIN_0001` | bareword bucket inside `ltm profile client-ssl { cert-key-chain { <name> { ... } } }` |
+| `CLIENT_POLICY` | `CLIENT_POLICY_0001` | bareword bucket inside `apm profile connectivity { client-policy { <name> { ... } } }` |
+| `USERNAME` | `USERNAME_0001` | value of `admin-name`, `basic-auth-username`, `basic-auth-realm`, `user`, `account-name`, `server-name` |
+| `KRB_REALM` | `KRB_REALM_0001` | uppercase realm value of `realm` field (e.g. `ACME.CORP`) — catches public-TLD realms the FQDN walker skips |
+| `LDAP_FILTER` | `LDAP_FILTER_0001` | value of `filter` field inside LDAP-flavoured blocks |
+| `SAML_ENTITY_ID` | `SAML_ENTITY_ID_0001` | value of `entity-id` field in SAML SP/IdP blocks |
+| `SAML_SSO_URI` | `SAML_SSO_URI_0001` | value of `sso-uri` field |
+| `SAML_SLO_URI` | `SAML_SLO_URI_0001` | value of `single-logout-uri` field |
+| `SAML_SLO_RESPONSE_URI` | `SAML_SLO_RESPONSE_URI_0001` | value of `single-logout-response-uri` field |
+| `OAUTH_AUDIENCE` | `OAUTH_AUDIENCE_0001` | value(s) of `audience` field (braced-list form supported) |
+| `OAUTH_ISSUER` | `OAUTH_ISSUER_0001` | value of `issuer` field |
+| `OAUTH_KEY_ID` | `OAUTH_KEY_ID_0001` | value of `key-id` field |
+| `MONITOR_RECV` | `MONITOR_RECV_0001` | value of `recv` field inside `ltm monitor` blocks |
+| `DATA_GROUP_RECORD` | `DATA_GROUP_RECORD_0001` | record bucket headers inside `ltm data-group internal/external` records bodies — operator-chosen lookup keys |
+| `APM_VAR_LITERAL` | `APM_VAR_LITERAL_0001` | LITERAL extracted from `expression "return {LITERAL}"` Tcl pattern in `apm policy agent variable-assign` bodies |
 
 ### Counter format
 
