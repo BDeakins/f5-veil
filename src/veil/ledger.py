@@ -283,6 +283,17 @@ class Kind(str, Enum):
     # records, every entry is identifying. Stored bare with
     # ``partition=None``; substring-sub renders
     # ``DATA_GROUP_RECORD_NNNN``.
+    APM_VAR_LITERAL = "APM_VAR_LITERAL"  # Literal value extracted
+    # from an ``expression "return {VALUE}"`` Tcl pattern inside an
+    # ``apm policy agent variable-assign`` body, discovered by
+    # pass-1.85m (v1.2 follow-up). VALUE is whatever the customer
+    # hard-coded for the session variable assignment — observed in
+    # real corpus to be AD domain names, usernames, AND LITERAL
+    # PASSWORDS (the F5 ``secure true`` flag doesn't actually
+    # encrypt this in the source config; it only affects how the
+    # value is rendered in the session). Stored bare with
+    # ``partition=None``; substring-sub renders
+    # ``APM_VAR_LITERAL_NNNN``.
 
 
 _RFC5737_NETWORKS = (

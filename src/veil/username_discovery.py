@@ -44,6 +44,7 @@ from .tokenizer import Token, TokKind, tokenize
 _USERNAME_FIELDS = frozenset({
     "admin-name",
     "basic-auth-username",
+    "basic-auth-realm",
     "user",
     "account-name",
     "server-name",

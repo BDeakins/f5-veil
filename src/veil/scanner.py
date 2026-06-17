@@ -39,6 +39,7 @@ from .ip_discovery import discover_ip_literals
 from .irule_comment_discovery import discover_irule_comments
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
+from .apm_var_literal_discovery import discover_apm_var_literals
 from .cert_keychain_discovery import discover_cert_keychains
 from .client_policy_discovery import discover_client_policies
 from .data_group_records_discovery import discover_data_group_records
@@ -220,6 +221,12 @@ def scan(
     # each non-path bareword bucket header as
     # ``Kind.DATA_GROUP_RECORD``.
     discover_data_group_records(src, ledger, diagnostics)
+    # Pass 1.85m — APM variable-assign expression literal walker.
+    # Catches ``expression "return {LITERAL}"`` hard-coded values
+    # being assigned to session variables (AD domain names, user-
+    # names, plaintext passwords — F5's ``secure true`` does NOT
+    # encrypt source-config literals).
+    discover_apm_var_literals(src, ledger, diagnostics)
     # Pass 1.9 — LDAP / AD distinguished-name discovery inside QSTRINGs
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
