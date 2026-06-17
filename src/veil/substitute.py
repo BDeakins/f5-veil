@@ -70,6 +70,8 @@ entry where applicable so callers can fail closed):
 
 from __future__ import annotations
 
+import re
+
 from .diagnostics import Diagnostics
 from .ledger import COMMON_PARTITION, Kind, Ledger, LedgerEntry, Ref
 from .tokenizer import Token, TokKind, tokenize
@@ -825,9 +827,59 @@ def _build_substring_render_map(
                 (colon_orig, colon_rendered, entry.placeholder,
                  _WORD_CHARS_FQDN_RIGHT)
             )
+        # v1.2 (post-Phase-3b user feedback) — FQDN-shaped-leaf
+        # variant. For path-shape entries whose LEAF is FQDN-shaped
+        # AND the FQDN walker hasn't already registered the leaf
+        # (i.e. public-TLD leafs that the FQDN walker by-design
+        # skips), register a leaf-only substring-sub entry. Covers
+        # the ``source-path /config/ssl/ssl.csr/<fqdn>.com`` shape
+        # where the bare leaf appears with no partition prefix and
+        # the public TLD blocks the FQDN walker.
+        leaf_variant = _fqdn_leaf_form_pair(entry, ledger)
+        if leaf_variant is not None:
+            leaf, leaf_rendered = leaf_variant
+            by_first_char.setdefault(leaf[0], []).append(
+                (leaf, leaf_rendered, entry.placeholder,
+                 _WORD_CHARS_FQDN_RIGHT)
+            )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
+
+
+_FQDN_LEAF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z][a-zA-Z0-9]+$")
+
+
+def _fqdn_leaf_form_pair(entry: LedgerEntry, ledger: Ledger) -> tuple[str, str] | None:
+    """For a path-shape entry whose leaf is FQDN-shaped AND not
+    already registered as a FQDN, return the leaf-only substring-sub
+    variant ``(leaf, bare_placeholder)``. Returns None otherwise.
+
+    This catches the ``source-path /config/ssl/ssl.csr/<fqdn>.com``
+    shape where:
+    - The path-shape entry's full slash form ``/Common/<fqdn>.com``
+      doesn't appear (the source-path has no ``/Common/`` prefix).
+    - The colon form ``:Common:<fqdn>.com`` doesn't appear (no
+      filestore prefix).
+    - The FQDN walker skipped the leaf because the TLD is public.
+
+    The variant uses the BARE placeholder (``UNK_NNNN``) rather than
+    the full path-shape placeholder (``/Common/UNK_NNNN``). At
+    reverse-substitute time the longer slash/colon forms still win
+    over the bare leaf via longest-match-first."""
+    if entry.partition is None:
+        return None
+    if not entry.original.startswith(f"/{entry.partition}/"):
+        return None
+    prefix_len = 1 + len(entry.partition) + 1
+    leaf = entry.original[prefix_len:]
+    if not leaf or not _FQDN_LEAF_RE.match(leaf):
+        return None
+    # Skip if FQDN walker already registered this leaf — would
+    # create a duplicate substring-sub key with ambiguous placement.
+    if (Kind.FQDN, leaf) in ledger.by_original:
+        return None
+    return leaf, entry.placeholder
 
 
 def _colon_form_pair(entry: LedgerEntry, ledger: Ledger) -> tuple[str, str] | None:
@@ -904,6 +956,13 @@ def _build_substring_reverse_render_map(
             colon_orig, colon_rendered = colon_variant
             by_first_char.setdefault(colon_rendered[0], []).append(
                 (colon_rendered, colon_orig, _WORD_CHARS_FQDN_RIGHT)
+            )
+        # v1.2 (post-Phase-3b) — FQDN-shaped-leaf variant (reverse).
+        leaf_variant = _fqdn_leaf_form_pair(entry, ledger)
+        if leaf_variant is not None:
+            leaf, leaf_rendered = leaf_variant
+            by_first_char.setdefault(leaf_rendered[0], []).append(
+                (leaf_rendered, leaf, _WORD_CHARS_FQDN_RIGHT)
             )
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
