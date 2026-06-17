@@ -4,43 +4,6 @@ F5 BIG-IP config obfuscator / de-obfuscator — sanitize customer configs
 for safe AI analysis, then restore identifiers byte-exactly after the
 AI is done.
 
-## Status
-
-**v1.2** — production-shaped against real BIG-IP configurations.
-
-Covers ~50 object kinds across LTM, GTM, net, APM, sys, security
-firewall, and SAML/OAuth/Kerberos/SNMP/syslog/SSHD bodies. Bare
-IPv4 / IPv6 literals substituted to RFC 5737 / RFC 3849 docs ranges
-with `/24` and `/64` source-subnet preservation. All three
-description body forms (QSTRING, bareword, braced) plus `caption`
-and `service-name` fields redacted. Tcl `#` comments inside `ltm
-rule` bodies redacted. Identifier substring substitution inside
-every QSTRING **and every BAREWORD** (catches monitor send/recv
-strings, APM policy expressions, bot-defense signatures, URL-shaped
-barewords, IP ranges, F5 filestore colon-separator paths
-(`:Common:<leaf>_<index>_<index>`), public-TLD FQDN leafs in
-source-paths). LDAP / AD distinguished names embedded in any
-QSTRING **and** as bareword `base-dn` / `search-base-dn` values.
-Kerberos realms (uppercase form, public-TLD support). SAML / OAuth
-identifier fields (entity-id, sso-uri, slo-uri, audience, issuer,
-key-id) as dedicated kinds — non-FQDN-shaped opaque values are
-caught. APM `expression "return {LITERAL}"` Tcl-literal patterns
-catch hard-coded session-variable values (domains, usernames,
-occasionally credentials). Multi-file two-pass ingestion
-(`bigip_base.conf` + `bigip.conf`). UCS archive ingestion
-(extract-only). AES-256-GCM-encrypted answer file with scrypt KDF.
-Round-trip is byte-exact for every shape the parser covers.
-
-Real-corpus canary count for the v1.2 integration pair went from
-40 → 0 across the v1.2 leak-coverage cycle (19 finding-groups
-discovered via manual inspection plus post-sign-off follow-ups).
-660+ tests pass with byte-exact round-trip preserved.
-
-Documented gaps (see [docs/architecture.md](docs/architecture.md)
-"Known gaps"): iRule `varname` customer leaks, public-TLD FQDNs
-outside cert/path/SAML contexts, free-text Tcl expression literals
-without recognised shape.
-
 ## The Problem
 
 F5 engineers want to use AI tools (Claude, ChatGPT, Copilot, etc.) to
@@ -93,6 +56,43 @@ placeholder text the AI produced in new content it wrote.
   shipped `.gitignore` blocks both — keep it that way.
 - VEIL does not attempt to obfuscate inside binary blobs, base64-encoded
   archives, or compiled artifacts. Strip those before obfuscation.
+
+## Status
+
+**v1.2** — production-shaped against real BIG-IP configurations.
+
+Covers ~50 object kinds across LTM, GTM, net, APM, sys, security
+firewall, and SAML/OAuth/Kerberos/SNMP/syslog/SSHD bodies. Bare
+IPv4 / IPv6 literals substituted to RFC 5737 / RFC 3849 docs ranges
+with `/24` and `/64` source-subnet preservation. All three
+description body forms (QSTRING, bareword, braced) plus `caption`
+and `service-name` fields redacted. Tcl `#` comments inside `ltm
+rule` bodies redacted. Identifier substring substitution inside
+every QSTRING **and every BAREWORD** (catches monitor send/recv
+strings, APM policy expressions, bot-defense signatures, URL-shaped
+barewords, IP ranges, F5 filestore colon-separator paths
+(`:Common:<leaf>_<index>_<index>`), public-TLD FQDN leafs in
+source-paths). LDAP / AD distinguished names embedded in any
+QSTRING **and** as bareword `base-dn` / `search-base-dn` values.
+Kerberos realms (uppercase form, public-TLD support). SAML / OAuth
+identifier fields (entity-id, sso-uri, slo-uri, audience, issuer,
+key-id) as dedicated kinds — non-FQDN-shaped opaque values are
+caught. APM `expression "return {LITERAL}"` Tcl-literal patterns
+catch hard-coded session-variable values (domains, usernames,
+occasionally credentials). Multi-file two-pass ingestion
+(`bigip_base.conf` + `bigip.conf`). UCS archive ingestion
+(extract-only). AES-256-GCM-encrypted answer file with scrypt KDF.
+Round-trip is byte-exact for every shape the parser covers.
+
+Real-corpus canary count for the v1.2 integration pair went from
+40 → 0 across the v1.2 leak-coverage cycle (19 finding-groups
+discovered via manual inspection plus post-sign-off follow-ups).
+660+ tests pass with byte-exact round-trip preserved.
+
+Documented gaps (see [docs/architecture.md](docs/architecture.md)
+"Known gaps"): iRule `varname` customer leaks, public-TLD FQDNs
+outside cert/path/SAML contexts, free-text Tcl expression literals
+without recognised shape.
 
 ## Installation
 
