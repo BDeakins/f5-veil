@@ -5,12 +5,18 @@ freeze, registering every value of a description-family field as a
 ``Kind.DESC`` entry. Pass-2 substitution then redacts the body to
 its placeholder.
 
-Description-family field names (v1.2):
+Description-family field names (v1.2.1):
 - ``description`` (original, v0.0.10)
 - ``caption`` (added v1.2, finding 13 — captions carry the same
   free-text disclosure risk as descriptions)
 - ``service-name`` (added v1.2, finding 12c — referenced ACS service
   names that don't otherwise register elsewhere)
+- ``claim-description`` / ``scope-description`` / ``claim-name`` /
+  ``scope-name`` (added v1.2.1, red-team T1A — APM
+  ``apm oauth oauth-claim`` / ``apm oauth oauth-scope`` nodes leaked
+  third-party product names through their free-text description and
+  name fields; over-redaction of generic OAuth names is acceptable
+  since the fields are free-form by spec)
 
 Supported forms:
 
@@ -46,6 +52,10 @@ _DESC_FIELDS = frozenset({
     "description",
     "caption",
     "service-name",
+    "claim-description",
+    "scope-description",
+    "claim-name",
+    "scope-name",
 })
 
 

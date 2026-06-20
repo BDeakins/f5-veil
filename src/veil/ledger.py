@@ -21,7 +21,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Iterable
 
 
 class Kind(str, Enum):
@@ -294,6 +294,75 @@ class Kind(str, Enum):
     # value is rendered in the session). Stored bare with
     # ``partition=None``; substring-sub renders
     # ``APM_VAR_LITERAL_NNNN``.
+    MONITOR_PATH = "MONITOR_PATH"  # URL path component of an LTM/GTM
+    # monitor ``send`` HTTP request line or ``success-match-value``
+    # field value, discovered by pass-1.85k.1 (v1.2.1 T2). Catches
+    # vendor / application fingerprints like ``/NMC/...`` (APC NMC
+    # web UI), ``/top.asp`` (classic ASP/IIS), ``/vdesk/...`` (Citrix
+    # VDI), ``/zabbix/...``, ``/grafana``. A small allowlist of
+    # commodity paths (``/``, ``/index.html``, ``/login``, etc.)
+    # passes through verbatim. Stored bare with ``partition=None``;
+    # substring-sub renders ``MONITOR_PATH_NNNN``.
+    SESSION_NS = "SESSION_NS"  # User-chosen segment word inside an
+    # APM session-variable namespace, discovered by pass-2.2
+    # (v1.2.1 T1B). For ``session.custom.<word>.<rest>`` interns
+    # the second segment; for ``session.<word>.<rest>`` where
+    # ``<word>`` is NOT in the F5-builtin allowlist interns the
+    # first segment. Placeholder is a metasyntactic vocab word
+    # (foo, bar, baz, qux, quux, corge, grault, garply, waldo,
+    # fred, plugh, xyzzy, thud) — visually distinct from
+    # ``KIND_NNNN`` placeholders so reviewers can tell at a glance
+    # which substitutions are redacted org namespaces. Overflow
+    # past 13 entries reuses the vocab with a numeric suffix
+    # (foo_01, bar_01, ...). Vocab slots that collide with a
+    # word-bounded occurrence anywhere in the source are
+    # pre-registered as unsafe and skipped at intern time to
+    # preserve byte-exact round-trip.
+    AD_ATTR = "AD_ATTR"  # Non-standard AD / LDAP attribute name listed
+    # inside ``query-attrname { ... }`` body of an LDAP-flavoured
+    # block (``apm aaa active-directory`` etc.), discovered by
+    # pass-1.85i.1 (v1.2.1 T3A). Standard AD schema attribute names
+    # (``sAMAccountName``, ``mail``, ``memberOf``, ...) pass through
+    # via an allowlist baked into the walker. Non-standard attrs
+    # fingerprint AD schema extensions and on-prem Exchange
+    # (``homeMDB``, ``msDS-ResultantPSO``, ``extensionAttribute1``).
+    # Stored bare with ``partition=None``; substring-sub renders
+    # ``AD_ATTR_NNNN``.
+    AD_NETBIOS = "AD_NETBIOS"  # NETBIOS domain prefix literal
+    # (``CORP\\username`` shape) discovered inside iRule TCL QSTRING
+    # bodies by pass-1.95 (v1.2.1 T4). NETBIOS rules: 1-15 char
+    # uppercase-leading identifier followed by a literal backslash
+    # (``\\`` in TMSH-escaped form). Reveals customer's AD NETBIOS
+    # domain name — not picked up by session-variable, description, or
+    # AD-DN walkers. Stored bare with ``partition=None``; substring-sub
+    # renders ``AD_NETBIOS_NNNN``.
+    UNC_PATH = "UNC_PATH"  # UNC server\share literal (``\\\\server\\share``
+    # shape) discovered inside iRule TCL QSTRING bodies by pass-1.95
+    # (v1.2.1 T4). Reveals customer's internal file-server hostnames
+    # and share names. Stored bare with ``partition=None``;
+    # substring-sub renders ``UNC_PATH_NNNN``.
+    TIMESTAMP = "TIMESTAMP"  # ``creation-time`` / ``last-modified-time``
+    # field value (``YYYY-MM-DD:HH:MM:SS`` shape), discovered by
+    # pass-1.85n (v1.2.1 T3B). Reveals 6-year config lineage if left
+    # literal. Rendered placeholder is the YEAR-COARSENED form
+    # (``YYYY-01-01:00:00:00``) so the year is preserved (low-fidelity
+    # operational metadata) but month/day/time is generalized.
+    # Format stays parser-compatible. Stored bare with
+    # ``partition=None``; placeholder IS the rendered text (not a
+    # ``KIND_NNNN`` token) because the format must remain a valid
+    # TMSH timestamp for any downstream re-load.
+    IRULE_IDENT = "IRULE_IDENT"  # Compound TCL identifier inside an
+    # iRule body that EMBEDS an already-interned SESSION_NS vendor
+    # word, discovered by pass 2.25 (v1.2.1 T5). Example:
+    # ``static::jwt_grafana_debug`` after T1B interned ``grafana ->
+    # foo`` — registered as IRULE_IDENT with ``original`` =
+    # ``static::jwt_grafana_debug`` and rendered placeholder =
+    # ``static::jwt_foo_debug``. Placeholder is the FULL rewritten
+    # identifier (not a ``KIND_NNNN`` token) because the substring
+    # walker can't relax word-boundary protection mid-identifier
+    # without false-firing on unrelated WORDs elsewhere — registering
+    # the whole identifier with a custom rendered form is surgical
+    # and keeps the existing substring-sub machinery applicable.
 
 
 _RFC5737_NETWORKS = (
@@ -336,6 +405,12 @@ class LedgerEntry:
 COMMON_PARTITION = "Common"
 
 
+_SESSION_NS_VOCAB: tuple[str, ...] = (
+    "foo", "bar", "baz", "qux", "quux", "corge", "grault", "garply",
+    "waldo", "fred", "plugh", "xyzzy", "thud",
+)
+
+
 class Ledger:
     def __init__(self) -> None:
         self.entries: dict[str, LedgerEntry] = {}
@@ -344,6 +419,15 @@ class Ledger:
         self._frozen: bool = False
         self._ipv4_allocator = _IPv4DocsAllocator()
         self._ipv6_allocator = _IPv6DocsAllocator()
+        # v1.2.1 T1B — SESSION_NS metasyntactic-vocab allocator state.
+        # _session_ns_unsafe: vocab words that collide with a word-
+        # bounded occurrence in any source file; populated by the
+        # walker's pre-scan before any intern is attempted.
+        # _session_ns_assigned_count: how many vocab slots we've
+        # already minted; lets us pick the next safe slot
+        # deterministically.
+        self._session_ns_unsafe: set[str] = set()
+        self._session_ns_assigned_count: int = 0
 
     def intern(
         self,
@@ -426,6 +510,177 @@ class Ledger:
         )
         self.by_original[(Kind.IPADDR, original)] = rendered
         self.counters[Kind.IPADDR] = self.counters.get(Kind.IPADDR, 0) + 1
+        return rendered
+
+    def mark_session_ns_unsafe(self, words: Iterable[str]) -> None:
+        """Register vocab words that collide with a word-bounded
+        occurrence in source content. The walker's pre-scan calls
+        this BEFORE any ``intern_session_namespace_word`` call so the
+        allocator never assigns a colliding slot. Multi-file callers
+        (``scan_many``) must pre-scan ALL files before any per-file
+        walker runs, because vocab assignments are ledger-wide and
+        can't be safely retroactively reassigned.
+
+        Idempotent. Safe to call after freeze (no new placeholders
+        are minted by this call)."""
+        self._session_ns_unsafe.update(words)
+
+    def intern_session_namespace_word(
+        self, original: str, discovery: Ref,
+    ) -> str:
+        """Intern an APM session-namespace user-chosen segment word.
+        Returns the assigned metasyntactic-vocab placeholder.
+
+        Allocation strategy: first ``len(_SESSION_NS_VOCAB)`` distinct
+        words consume the vocab in order, skipping any vocab slot in
+        :attr:`_session_ns_unsafe`. After vocab exhaustion, allocates
+        ``<vocab_word>_<NN>`` using a round-robin over the original
+        vocab (so output stays visually metasyntactic even at scale).
+        Idempotent: re-interning the same ``original`` returns the
+        previously assigned placeholder."""
+        if self._frozen:
+            raise RuntimeError(
+                "ledger is frozen; cannot mint a new SESSION_NS placeholder"
+            )
+        existing = self.by_original.get((Kind.SESSION_NS, original))
+        if existing is not None:
+            return existing
+        rendered = self._next_session_ns_placeholder()
+        if rendered in self.entries:
+            raise RuntimeError(
+                f"SESSION_NS rendering {rendered!r} collides with existing "
+                f"ledger entry — investigate vocab-collision pre-scan."
+            )
+        self.entries[rendered] = LedgerEntry(
+            placeholder=rendered,
+            original=original,
+            kind=Kind.SESSION_NS,
+            partition=None,
+            discovery=discovery,
+        )
+        self.by_original[(Kind.SESSION_NS, original)] = rendered
+        self.counters[Kind.SESSION_NS] = (
+            self.counters.get(Kind.SESSION_NS, 0) + 1
+        )
+        self._session_ns_assigned_count += 1
+        return rendered
+
+    def _next_session_ns_placeholder(self) -> str:
+        """Return the next safe vocab slot for a fresh SESSION_NS
+        intern. Skips slots in :attr:`_session_ns_unsafe`. After the
+        first pass over the vocab is exhausted, cycles back with a
+        numeric suffix (``foo_01``, ``bar_01``, ...) so the visual
+        metasyntactic signal is preserved at scale."""
+        idx = self._session_ns_assigned_count
+        cycle = idx // len(_SESSION_NS_VOCAB)
+        # Iterate from the current logical position forward, skipping
+        # unsafe slots. Bounded loop: at most one full revolution of
+        # the vocab per call, then we accept whatever the cycle is.
+        for offset in range(len(_SESSION_NS_VOCAB)):
+            slot = (idx + offset) % len(_SESSION_NS_VOCAB)
+            word = _SESSION_NS_VOCAB[slot]
+            candidate = word if cycle == 0 else f"{word}_{cycle:02d}"
+            if candidate in self._session_ns_unsafe:
+                continue
+            if candidate in self.entries:
+                continue
+            # Found a safe slot — fast-forward the counter past any
+            # unsafe slots we skipped so subsequent calls don't keep
+            # re-scanning them.
+            self._session_ns_assigned_count = idx + offset
+            return candidate
+        # Entire vocab cycle is unsafe — escalate to next cycle.
+        self._session_ns_assigned_count = (
+            (cycle + 1) * len(_SESSION_NS_VOCAB)
+        )
+        return self._next_session_ns_placeholder()
+
+    def intern_timestamp(
+        self,
+        original: str,
+        rendered: str,
+        discovery: Ref,
+    ) -> str:
+        """Intern a year-coarsened timestamp (v1.2.1 T3B). ``rendered``
+        is the format-preserving coarsened form computed by the
+        walker (``YYYY-01-01:00:00:00``). Idempotent on ``original``."""
+        if self._frozen:
+            raise RuntimeError(
+                "ledger is frozen; cannot mint a new TIMESTAMP placeholder"
+            )
+        existing = self.by_original.get((Kind.TIMESTAMP, original))
+        if existing is not None:
+            return existing
+        if rendered in self.entries:
+            # Multiple distinct originals coarsening to the same
+            # rendered text would collide. Append a disambiguation
+            # suffix that's still timestamp-shape-compatible (use the
+            # microsecond slot the format reserves).
+            rendered = self._next_unique_timestamp(rendered)
+        self.entries[rendered] = LedgerEntry(
+            placeholder=rendered,
+            original=original,
+            kind=Kind.TIMESTAMP,
+            partition=None,
+            discovery=discovery,
+        )
+        self.by_original[(Kind.TIMESTAMP, original)] = rendered
+        self.counters[Kind.TIMESTAMP] = (
+            self.counters.get(Kind.TIMESTAMP, 0) + 1
+        )
+        return rendered
+
+    def _next_unique_timestamp(self, base: str) -> str:
+        """Disambiguate a coarsened timestamp by walking the second
+        slot up. Used when two distinct sources coarsen to the same
+        year-coarsened form (extremely rare — only when both have
+        ``-01-01:00:00:00`` already). Caller already verified ``base``
+        collides."""
+        # ``YYYY-01-01:00:00:00`` — bump the ``00`` seconds slot.
+        for n in range(1, 60):
+            candidate = base[:-2] + f"{n:02d}"
+            if candidate not in self.entries:
+                return candidate
+        raise RuntimeError(
+            "TIMESTAMP coarsening collision pool exhausted (60 entries "
+            "with identical year)"
+        )
+
+    def intern_irule_ident(
+        self,
+        original: str,
+        rendered: str,
+        discovery: Ref,
+    ) -> str:
+        """Intern a TCL identifier rewrite. ``rendered`` is the full
+        substituted form (e.g. ``static::jwt_foo_debug``) — used as
+        BOTH the entry placeholder AND the substring-sub target.
+        Idempotent on ``original``. Raises ``RuntimeError`` if the
+        rendered string collides with an existing ledger entry
+        (would corrupt substitution)."""
+        if self._frozen:
+            raise RuntimeError(
+                "ledger is frozen; cannot mint a new IRULE_IDENT placeholder"
+            )
+        existing = self.by_original.get((Kind.IRULE_IDENT, original))
+        if existing is not None:
+            return existing
+        if rendered in self.entries:
+            raise RuntimeError(
+                f"IRULE_IDENT rendering {rendered!r} collides with existing "
+                f"ledger entry — investigate vendor-substitution overlap."
+            )
+        self.entries[rendered] = LedgerEntry(
+            placeholder=rendered,
+            original=original,
+            kind=Kind.IRULE_IDENT,
+            partition=None,
+            discovery=discovery,
+        )
+        self.by_original[(Kind.IRULE_IDENT, original)] = rendered
+        self.counters[Kind.IRULE_IDENT] = (
+            self.counters.get(Kind.IRULE_IDENT, 0) + 1
+        )
         return rendered
 
     @property

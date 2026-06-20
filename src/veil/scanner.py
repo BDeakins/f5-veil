@@ -32,11 +32,20 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from .ad_dn_discovery import discover_ad_dns
+from .ad_query_attrname_discovery import discover_ad_query_attrnames
+from .apm_session_var_discovery import (
+    discover_apm_session_namespaces,
+    preregister_session_ns_collisions,
+)
 from .description_discovery import discover_descriptions
 from .diagnostics import Diagnostics
 from .fqdn_discovery import discover_fqdns
 from .ip_discovery import discover_ip_literals
 from .irule_comment_discovery import discover_irule_comments
+from .irule_tcl_literal_discovery import (
+    discover_irule_tcl_identifiers,
+    discover_irule_tcl_literals,
+)
 from .ledger import COMMON_PARTITION, Kind, Ledger, Ref
 from .remote_role_discovery import discover_remote_roles
 from .apm_var_literal_discovery import discover_apm_var_literals
@@ -45,11 +54,13 @@ from .client_policy_discovery import discover_client_policies
 from .data_group_records_discovery import discover_data_group_records
 from .krb_realm_discovery import discover_krb_realms
 from .ldap_filter_discovery import discover_ldap_filters
+from .monitor_path_discovery import discover_monitor_paths
 from .monitor_recv_discovery import discover_monitor_recv
 from .saml_oauth_discovery import discover_saml_oauth
 from .snmp_discovery import discover_snmp
 from .sshd_discovery import discover_sshd_banners
 from .syslog_discovery import discover_syslog
+from .timestamp_discovery import discover_timestamps
 from .tokenizer import Token, TokKind, tokenize
 from .username_discovery import discover_usernames
 
@@ -207,6 +218,13 @@ def scan(
     # flavoured top-level blocks; interns ``filter <value>`` pairs
     # as ``Kind.LDAP_FILTER``.
     discover_ldap_filters(src, ledger, diagnostics)
+    # Pass 1.85i.1 — AD query-attrname walker (v1.2.1 T3A). Shares
+    # the LDAP-flavoured header allowlist with pass 1.85i. Interns
+    # non-standard AD/LDAP attribute names listed inside
+    # ``query-attrname { ... }`` as ``Kind.AD_ATTR``. Standard AD
+    # schema attrs (``sAMAccountName``, ``mail``, etc.) pass through
+    # via the walker's bundled allowlist.
+    discover_ad_query_attrnames(src, ledger, diagnostics)
     # Pass 1.85j — SAML / OAuth identifier field walker (v1.2). Runs
     # BEFORE the FQDN walker so longest-match-first substring sub at
     # substitution time picks the full-URL SAML_ENTITY_ID over the
@@ -216,11 +234,25 @@ def scan(
     # the ``recv`` field inside LTM/GTM monitor blocks as
     # ``Kind.MONITOR_RECV``.
     discover_monitor_recv(src, ledger, diagnostics)
+    # Pass 1.85k.1 — Monitor URL-path walker (v1.2.1 T2). Parses the
+    # request-line URL path inside ``send`` QSTRINGs and the value
+    # of ``success-match-value`` fields when URL-shaped; interns
+    # paths as ``Kind.MONITOR_PATH``. Catches vendor / application
+    # fingerprints (``/NMC/...``, ``/top.asp``, ``/vdesk/...``, etc.)
+    # that the v1.2 walker class missed.
+    discover_monitor_paths(src, ledger, diagnostics)
     # Pass 1.85l — Data-group records walker (v1.2). Context-gated
     # to ``ltm data-group internal/external`` records bodies; interns
     # each non-path bareword bucket header as
     # ``Kind.DATA_GROUP_RECORD``.
     discover_data_group_records(src, ledger, diagnostics)
+    # Pass 1.85n — Timestamp year-coarsening walker (v1.2.1 T3B).
+    # Scans every ``creation-time`` / ``last-modified-time`` field
+    # value and interns as ``Kind.TIMESTAMP`` with a year-coarsened
+    # rendered form (``YYYY-01-01:00:00:00``). Year preserved for
+    # low-fidelity operational metadata; specific date / time
+    # generalized away.
+    discover_timestamps(src, ledger, diagnostics)
     # Pass 1.85m — APM variable-assign expression literal walker.
     # Catches ``expression "return {LITERAL}"`` hard-coded values
     # being assigned to session variables (AD domain names, user-
@@ -231,6 +263,15 @@ def scan(
     # (v0.0.13). Catches ``auth remote-role attribute "memberOf=CN=...,
     # DC=..."`` and APM access-policy ``expression "... CN=...,DC=..."``.
     discover_ad_dns(src, ledger, diagnostics)
+    # Pass 1.95 — iRule TCL literal walker (v1.2.1 T4). Context-gated
+    # to ``ltm rule`` / ``apm policy customization{,-source}`` /
+    # ``apm policy agent`` bodies. Inside, scans every QSTRING for
+    # NETBIOS prefix (``CORP\\``), permissive FQDN (any TLD, 3+
+    # labels — catches SaaS tenant subdomains like
+    # ``api-ce04d788.duosecurity.com`` that strict pass-2.0 skips),
+    # email literal, and UNC path. Runs BEFORE pass 2.0 so the strict
+    # walker can dedup internal-suffix FQDNs already interned here.
+    discover_irule_tcl_literals(src, ledger, diagnostics)
     # Pass 2.0 — internal-FQDN discovery (v1.2). Catches
     # ``example.local`` / ``foo.lan`` / ``host.home.arpa`` shapes
     # embedded anywhere in WORD or QSTRING tokens. Pre-v1.2 these
@@ -244,6 +285,25 @@ def scan(
     # sees internal-suffix realms (``ACME.LOCAL``) already registered
     # as FQDN entries.
     discover_krb_realms(src, ledger, diagnostics)
+    # Pass 2.15 — pre-register SESSION_NS vocab collisions for THIS
+    # source file. Multi-file callers (``scan_many``) should pre-
+    # register across ALL files before entering this loop; the
+    # in-loop call here is a safety net for single-file ``scan()``
+    # callers and is idempotent for the multi-file case.
+    preregister_session_ns_collisions(src, ledger)
+    # Pass 2.2 — APM session-variable user-namespace tokenization
+    # (v1.2.1 T1B). Catches ``session.custom.<word>.<rest>`` and
+    # ``session.<non-builtin>.<rest>``. Placeholder vocab is the
+    # canonical 13-word metasyntactic set (foo, bar, baz, ...).
+    discover_apm_session_namespaces(src, ledger, diagnostics)
+    # Pass 2.25 — iRule TCL identifier walker (v1.2.1 T5). Scans
+    # WORD tokens inside iRule-context bodies for TCL identifiers
+    # that embed a SESSION_NS vendor word as an identifier-bounded
+    # substring (``static::jwt_grafana_debug`` → rewritten to
+    # ``static::jwt_foo_debug``). Must run AFTER pass 2.2 so the
+    # SESSION_NS entries exist in the ledger when the walker
+    # iterates.
+    discover_irule_tcl_identifiers(src, ledger, diagnostics)
     return ledger, diagnostics
 
 
@@ -280,6 +340,13 @@ def scan_many(
         ledger = Ledger()
     if diagnostics is None:
         diagnostics = Diagnostics()
+    # v1.2.1 T1B — pre-register SESSION_NS vocab collisions across
+    # ALL source files before any per-file walker runs. Vocab
+    # assignments are ledger-wide; a vocab word that collides with
+    # content in file B can't be safely reassigned after file A's
+    # walker has already minted placeholders.
+    for _filename, src in sources:
+        preregister_session_ns_collisions(src, ledger)
     for _filename, src in sources:
         scan(src, ledger=ledger, diagnostics=diagnostics)
     return ledger, diagnostics

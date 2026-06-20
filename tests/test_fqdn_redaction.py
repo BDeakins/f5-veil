@@ -43,6 +43,11 @@ def test_standalone_internal_fqdn_bareword_redacted():
 
 
 def test_fqdn_inside_url_bareword_redacted():
+    # Pre-T8 this asserted ``https://FQDN_0001/saml/idp`` — FQDN
+    # redacted, path leaked. v121_t2 round 3 flagged the surviving
+    # path as a leak class; T8 (v1.2.1) now intercepts URL-bearing
+    # fields at pass-1.85k.1 and interns the FULL URL as
+    # MONITOR_PATH, so both host AND path are redacted together.
     src = (
         "apm policy access-policy /Common/p1 {\n"
         "    application-uri https://idp01.example.local/saml/idp\n"
@@ -51,7 +56,8 @@ def test_fqdn_inside_url_bareword_redacted():
     ledger, diag = scan(src)
     sanitized, _ = substitute(src, ledger, diag)
     assert "idp01.example.local" not in sanitized
-    assert "https://FQDN_0001/saml/idp" in sanitized
+    assert "/saml/idp" not in sanitized
+    assert "MONITOR_PATH_" in sanitized
     restored = reverse_substitute(sanitized, ledger)
     assert restored == src
 
@@ -129,12 +135,21 @@ def test_multiple_distinct_fqdns_get_distinct_placeholders():
 
 
 def test_identical_fqdn_in_two_sites_dedups_to_single_placeholder():
+    # T8 (v1.2.1) intercepts ``application-uri`` and interns the
+    # FULL URL as MONITOR_PATH, so this test moved to a non-URL
+    # surface to keep verifying FQDN-walker dedup behavior. Two
+    # bareword FQDN refs in pool-member context should dedup to a
+    # single FQDN entry.
     src = (
-        "apm policy access-policy /Common/p1 {\n"
-        "    application-uri https://host02.example.local/login\n"
+        "ltm pool /Common/p1 {\n"
+        "    members {\n"
+        "        host02.example.local:443 { address 10.0.0.1 }\n"
+        "    }\n"
         "}\n"
-        "apm policy access-policy /Common/p2 {\n"
-        "    application-uri https://host02.example.local/logout\n"
+        "ltm pool /Common/p2 {\n"
+        "    members {\n"
+        "        host02.example.local:443 { address 10.0.0.2 }\n"
+        "    }\n"
         "}\n"
     )
     ledger, diag = scan(src)
