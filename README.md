@@ -59,45 +59,74 @@ placeholder text the AI produced in new content it wrote.
 
 ## Status
 
-**v1.2** — production-shaped against real BIG-IP configurations.
+**v1.2.2** — production-shaped against real BIG-IP configurations.
 
 Covers ~50 object kinds across LTM, GTM, net, APM, sys, security
 firewall, and SAML/OAuth/Kerberos/SNMP/syslog/SSHD bodies. Bare
 IPv4 / IPv6 literals substituted to RFC 5737 / RFC 3849 docs ranges
 with `/24` and `/64` source-subnet preservation. All three
 description body forms (QSTRING, bareword, braced) plus `caption`
-and `service-name` fields redacted. Tcl `#` comments inside `ltm
-rule` bodies redacted. Identifier substring substitution inside
-every QSTRING **and every BAREWORD** (catches monitor send/recv
-strings, APM policy expressions, bot-defense signatures, URL-shaped
-barewords, IP ranges, F5 filestore colon-separator paths
+and `service-name` fields redacted, including the APM
+`oauth-claim` / `oauth-scope` `claim-description` /
+`scope-description` fields added in v1.2.1. Tcl `#` comments inside
+`ltm rule` bodies redacted. Identifier substring substitution
+inside every QSTRING **and every BAREWORD** (catches monitor
+send/recv strings, APM policy expressions, bot-defense signatures,
+URL-shaped barewords, IP ranges, F5 filestore colon-separator paths
 (`:Common:<leaf>_<index>_<index>`), public-TLD FQDN leafs in
 source-paths). LDAP / AD distinguished names embedded in any
 QSTRING **and** as bareword `base-dn` / `search-base-dn` values.
+Non-standard AD `query-attrname` attributes (`homeMDB`,
+`extensionAttribute1`, etc.) tokenize while the standard schema
+allowlist (`sAMAccountName`, `memberOf`, ...) passes through.
 Kerberos realms (uppercase form, public-TLD support). SAML / OAuth
 identifier fields (entity-id, sso-uri, slo-uri, audience, issuer,
 key-id) as dedicated kinds — non-FQDN-shaped opaque values are
 caught. APM `expression "return {LITERAL}"` Tcl-literal patterns
 catch hard-coded session-variable values (domains, usernames,
-occasionally credentials). Multi-file two-pass ingestion
+occasionally credentials). APM `session.custom.<word>.<rest>`
+user-chosen namespace segments tokenize against a 13-word
+metasyntactic vocab (`foo`, `bar`, `baz`, ... `xyzzy`, `thud`) so
+org-namespace redactions are visually distinct from `KIND_NNNN`
+placeholders. iRule TCL QSTRING literals (NETBIOS prefix,
+permissive FQDN, email, UNC path, IPv4) and iRule TCL identifier
+rewrites (`static::jwt_<vendor>_*` → `static::jwt_<vocab>_*`)
+captured by dedicated v1.2.1 passes. Monitor `send` / `recv` HTTP
+request-line URL paths tokenize via `MONITOR_PATH`; v1.2.2
+additionally scans those QSTRING bodies for IPv4 literals (with
+optional CIDR) so embedded `Host:` headers don't leak. Timestamp
+year-coarsening (`creation-time` / `last-modified-time` →
+`YYYY-01-01:00:00:00`). Multi-file two-pass ingestion
 (`bigip_base.conf` + `bigip.conf`). UCS archive ingestion
 (extract-only). AES-256-GCM-encrypted answer file with scrypt KDF.
 Round-trip is byte-exact for every shape the parser covers.
 
 Real-corpus canary count for the v1.2 integration pair went from
-40 → 0 across the v1.2 leak-coverage cycle (19 finding-groups
-discovered via manual inspection plus post-sign-off follow-ups).
-660+ tests pass with byte-exact round-trip preserved.
+40 → 0 across the v1.2 leak-coverage cycle (19 finding-groups);
+v1.2.1 closed seven additional walker gaps + one substring-sub
+over-fire fix surfaced by a post-v1.2 cold-read red-team; v1.2.2
+closed one further `MONITOR_PATH` QSTRING IPv4 leak surfaced by a
+post-v1.2.1 red-team. **759 tests pass** with byte-exact round-trip
+preserved on the integration pair.
 
 Documented gaps (see [docs/architecture.md](docs/architecture.md)
-"Known gaps"): iRule `varname` customer leaks, public-TLD FQDNs
-outside cert/path/SAML contexts, free-text Tcl expression literals
-without recognised shape.
+"Known gaps"): vendor names in TCL identifiers without a
+`session.*` anchor; hardcoded high-entropy TCL string literals
+(OAuth client_ids, magic SAML markers) inside `proc` returns;
+`DATA_GROUP_RECORD` substring-sub cosmetic over-fire on common
+English / geographic terms (round-trip preserved). All three
+deferred to v1.3.
 
 ## Installation
 
 ```bash
 pip install f5-veil
+```
+
+Or pin to the current release:
+
+```bash
+pip install f5-veil==1.2.2
 ```
 
 Or from source:
@@ -197,7 +226,7 @@ tripped under `--strict`.
 
 ## Identifier scope
 
-**Obfuscated by VEIL (v1.2):**
+**Obfuscated by VEIL (v1.2.2):**
 
 - **LTM:** pool, virtual server, node, monitor, iRule, partition,
   profile (custom — built-ins like `/Common/http` pass through as
@@ -208,7 +237,10 @@ tripped under `--strict`.
 - **Net:** VLAN, route-domain, self-IP, trunk
 - **APM:** policy, profile, `cert-key-chain` and `client-policy`
   nested bucket names, `expression "return {LITERAL}"` Tcl literals
-  in `variable-assign` blocks
+  in `variable-assign` blocks, `oauth-claim` / `oauth-scope`
+  description fields (v1.2.1), `session.custom.<word>.<rest>`
+  user-namespace segments → `SESSION_NS` 13-word metasyntactic
+  vocab (v1.2.1)
 - **SAML / OAuth:** entity-id, sso-uri, single-logout-uri,
   single-logout-response-uri, audience, issuer, key-id — dedicated
   kinds so non-FQDN-shaped opaque values are caught (the FQDN
@@ -216,7 +248,9 @@ tripped under `--strict`.
 - **Identity / field walkers:** `admin-name`, `basic-auth-username`,
   `basic-auth-realm`, `user`, `account-name`, `server-name` →
   `USERNAME`; LDAP `filter` field; LDAP `base-dn` / `search-base-dn`
-  bareword DC=...,DC=... shapes
+  bareword DC=...,DC=... shapes; non-standard AD `query-attrname`
+  values → `AD_ATTR` (v1.2.1; standard schema attrs like
+  `sAMAccountName` / `memberOf` allowlisted)
 - **Sys family:** `sys snmp` body (community / trap bucket headers,
   plaintext community strings, `sys-contact`, `sys-location`);
   `sys syslog` remote-server bucket headers; `sys sshd` banner
@@ -229,7 +263,10 @@ tripped under `--strict`.
 - **Network literals:** bare IPv4 / IPv6 (substituted into RFC 5737 /
   RFC 3849 docs ranges, preserving source `/24` and `/64` structure
   first-seen-first-allocated); IP-walker skips version-field values
-  (`version 17.5.1.5` no longer gets substituted as an IP)
+  (`version 17.5.1.5` no longer gets substituted as an IP); IPv4
+  literals (with optional CIDR) inside monitor `send` / `recv`
+  QSTRING bodies caught via `MONITOR_PATH` (v1.2.2 — closes
+  `Host: 192.168.100.1` leak class)
 - **Free-text:**
   - `description` / `caption` / `service-name` bodies — QSTRING,
     bareword, and braced forms all redacted to `DESC_NNNN`
@@ -243,6 +280,23 @@ tripped under `--strict`.
     any WORD or QSTRING — redacted to `FQDN_NNNN`
   - Monitor `recv` strings (HTML titles, product names) — redacted
     to `MONITOR_RECV_NNNN`
+  - Monitor `send` HTTP request-line URL paths and non-monitor URL-
+    bearing fields (`uri`, `request-value`, `application-uri`) —
+    redacted to `MONITOR_PATH_NNNN` (v1.2.1; small allowlist of
+    `/`, `/index.html`, `/login`, `/health` passes through)
+  - iRule TCL QSTRING literals — NETBIOS prefix (`CORP\\`) →
+    `AD_NETBIOS`, permissive FQDN (catches SaaS tenant subdomains
+    the strict FQDN walker skips), email → `USERNAME`, UNC path
+    (`\\server\share`) → `UNC_PATH`, IPv4 inside TCL `expression`
+    bodies (v1.2.1)
+  - iRule TCL identifier rewrites — `static::jwt_<vendor>_*` and
+    similar identifiers that embed a `SESSION_NS` vendor word
+    rewrite to `static::jwt_<vocab>_*` via `IRULE_IDENT` (v1.2.1)
+  - Timestamp year-coarsening — `creation-time` /
+    `last-modified-time` collapse to `YYYY-01-01:00:00:00` via
+    `TIMESTAMP` (year preserved as low-fidelity operational signal,
+    month/day/time generalized; format-preserving for TMSH parsers;
+    v1.2.1)
   - F5 filestore colon-separator paths
     (`:Common:<leaf>_<index>_<index>`) — caught via substring sub
     variant on path-shape entries
@@ -257,19 +311,31 @@ tripped under `--strict`.
   - UCS archive mode: extract-only, allowlists `config/bigip_base.conf`,
     `config/bigip.conf`, `config/bigip_user.conf`
 
-**Documented gaps (operator review required):**
+**Documented gaps (operator review required, deferred to v1.3):**
 
-- iRule `varname` customer-name leaks — renaming would break
-  positional Tcl refs, so VEIL does not auto-redact
-- Public-TLD FQDNs outside the dedicated walker / cert-path /
-  source-path contexts — the global FQDN walker only catches
-  internal-suffix TLDs to avoid false positives on legitimate
-  public DNS references
+- Vendor names in TCL identifiers **without** a `session.*` anchor
+  — v1.2.1's `IRULE_IDENT` walker catches embedded vendor words
+  only when they're already interned by `SESSION_NS` (via
+  `session.custom.<vendor>.*`). Pure `static::<vendor>_*` variables
+  whose vendor never appears in a session-namespace anchor survive.
+- Hardcoded TCL string literals / secrets in `proc` returns —
+  high-entropy alphanumeric tokens (OAuth client_ids), magic SAML
+  markers (`"Canary"`-style strings) hardcoded inside iRule `proc`
+  bodies aren't caught by the v1.2.1 TCL literal walker's shape
+  detectors (not FQDN / IP / NETBIOS / email / UNC).
+- `DATA_GROUP_RECORD` substring-sub cosmetic over-fire on common
+  English / geographic terms (`America`, `Central`, `Eastern`, ...).
+  Round-trip preserved (reverse map restores), but sanitized output
+  is structurally weird. Walker-level skip-list fix is the path.
 - Free-text Tcl expression literals (`expression "[mcget {...}]"`)
-  without a recognised shape
-- Persistent cross-run identifier map (deferred to v2.0)
+  without a recognised shape — operator-side review still required
+  for arbitrary expression bodies.
+- Public-TLD FQDNs outside cert-path / SAML / iRule-TCL contexts —
+  the global FQDN walker only catches internal-suffix TLDs by
+  design.
+- Persistent cross-run identifier map — deferred to v2.0.
 - Folder-as-own-kind (`/Common/folder/sub/leaf` currently collapses
-  folder into the leaf placeholder) — v1.3+
+  folder into the leaf placeholder) — v1.3+.
 
 ## Roadmap
 
@@ -286,6 +352,22 @@ tripped under `--strict`.
   APM expression literal field walkers, filestore colon-separator
   substring sub, FQDN-shaped leaf substring sub. Real-corpus canary
   count for the integration pair: 40 → 0. Shipped.
+- **v1.2.1** — Seven-walker leak-coverage hardening cycle driven by
+  a cold-read red-team of the v1.2 sanitized output, plus one
+  substring-sub over-fire fix. New `Kind` values: `AD_ATTR`,
+  `AD_NETBIOS`, `UNC_PATH`, `TIMESTAMP`, `IRULE_IDENT`,
+  `SESSION_NS`, `MONITOR_PATH`. New walker files:
+  `ad_query_attrname_discovery`, `apm_session_var_discovery`,
+  `monitor_path_discovery`, `irule_tcl_literal_discovery`,
+  `timestamp_discovery`. T7 substring-sub short-literal filter
+  (pure-digit ≤3 chars) closes the `version 17.5.1.5` over-fire.
+  755 tests pass. Shipped.
+- **v1.2.2** — Patch release closing one CRITICAL leak surfaced by
+  the post-v1.2.1 red-team: real private IPs (`Host: 192.168.100.1`)
+  surviving inside monitor `send` / `recv` QSTRING bodies.
+  `monitor_path_discovery` extended to scan QSTRING bodies for
+  IPv4 literals (with optional CIDR) gated on `send` / `recv`
+  field names. 759 tests pass. Shipped.
 - **v1.3** — Personal-use Docker image + thin FastAPI wrapper around
   the CLI (paste config in browser, get sanitized output and encrypted
   answer file out). RAM-only processing, no auth, **not for internet
