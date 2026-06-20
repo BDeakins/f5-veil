@@ -24,14 +24,19 @@ from veil.substitute import reverse_substitute, substitute
 
 
 def test_ip_inside_url_bareword_substituted():
-    """``application-uri https://10.0.0.42/path`` is one compound
-    BAREWORD; the embedded IP is substituted in place."""
+    """``target-uri https://10.0.0.42/path`` is one compound
+    BAREWORD; the embedded IP is substituted in place.
+
+    Uses ``target-uri`` (not ``application-uri``) because v1.2.1 T8
+    intercepts ``application-uri`` / ``uri`` / ``request-value`` and
+    interns the FULL URL as MONITOR_PATH, which would supersede the
+    IP substring-sub behavior this test is documenting."""
     src = (
         "ltm node /Common/web1 {\n"
         "    address 10.0.0.42\n"
         "}\n"
         "apm policy access-policy /Common/p1 {\n"
-        "    application-uri https://10.0.0.42/login\n"
+        "    target-uri https://10.0.0.42/login\n"
         "}\n"
     )
     ledger, diag = scan(src)

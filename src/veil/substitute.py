@@ -99,10 +99,22 @@ _WORD_CHARS_FQDN_RIGHT = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
-# v1.2 — description-family field names. Walker (pass-1.7) and
+# v1.2.1 — description-family field names. Walker (pass-1.7) and
 # substitute side both gate on this set. Keep in sync with
 # ``_DESC_FIELDS`` in ``description_discovery.py``.
-_DESC_FIELDS = frozenset({"description", "caption", "service-name"})
+_DESC_FIELDS = frozenset({
+    "description",
+    "caption",
+    "service-name",
+    # v1.2.1 — APM oauth-claim / oauth-scope free-text fields
+    # (red-team T1A: claim-description leaked "Grafana"; over-redacting
+    # the generic claim-name / scope-name fields is acceptable since
+    # they're free-form by spec).
+    "claim-description",
+    "scope-description",
+    "claim-name",
+    "scope-name",
+})
 
 
 def substitute(
@@ -805,6 +817,8 @@ def _build_substring_render_map(
             continue
         if not entry.original:
             continue
+        if _is_unsafe_short_literal(entry):
+            continue
         rendered = _rendered_for_substring(entry, ledger)
         if rendered is None:
             continue
@@ -845,6 +859,38 @@ def _build_substring_render_map(
     for lst in by_first_char.values():
         lst.sort(key=lambda x: -len(x[0]))
     return by_first_char
+
+
+def _is_unsafe_short_literal(entry: LedgerEntry) -> bool:
+    """v1.2.1 T7 — substring-sub short-literal exclusion. Filter
+    entries from the substring-sub map when ``original`` is so short
+    and simple it would over-fire incidentally across unrelated
+    source text. Observed concrete failure: ``1`` interned as
+    APM_VAR_LITERAL_0001 (from a corpus ``return {1}`` expression)
+    over-fired on every standalone ``1``, corrupting ``version
+    17.5.1.5`` to ``version 17.5.APM_VAR_LITERAL_0001.5``.
+
+    Heuristic (intentionally narrow to avoid breaking real customer
+    secret redaction — APM_VAR_LITERAL legitimately interns short
+    alphabetic originals like ``acme`` / ``admin`` / ``Secret``
+    that MUST substring-substitute): filter only pure-digit
+    originals of length ≤ 3. These are virtually always version
+    numbers, port numbers, or array indices — never customer-
+    identifying. The entry stays in the ledger (for full-WORD
+    substitution and answer-file round-trip), but it doesn't
+    pollute the substring map.
+
+    Broader length+alphanumeric heuristics from the original plan
+    were tried and rejected — they false-positive on customer
+    secrets (``Secret`` interned as APM_VAR_LITERAL, ``acme``
+    as a domain literal). The ``America`` / ``Central`` data-group-
+    record over-fire flagged in the v1.2 red-team is a SEPARATE
+    issue best fixed at the walker level (skip-list in
+    data_group_records_discovery), not here."""
+    orig = entry.original
+    if not orig or len(orig) > 3:
+        return False
+    return orig.isdigit()
 
 
 _FQDN_LEAF_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z][a-zA-Z0-9]+$")
@@ -940,6 +986,12 @@ def _build_substring_reverse_render_map(
         if kind_filter is not None and entry.kind not in kind_filter:
             continue
         if not entry.original:
+            continue
+        # v1.2.1 T7 — mirror forward-map short-literal exclusion so
+        # the reverse map doesn't try to restore an entry the forward
+        # map never substituted. Symmetric filtering keeps the maps
+        # in sync.
+        if _is_unsafe_short_literal(entry):
             continue
         rendered = _rendered_for_substring(entry, ledger)
         if rendered is None:
