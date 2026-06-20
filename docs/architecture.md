@@ -1,24 +1,38 @@
 # f5-veil Architecture
 
-Status: v1.1.0 — pass-1 + pass-1.5 (IP with v1.1 infix BAREWORD scan) +
-pass-1.7 (description) + pass-1.8 (iRule `#` comment) + pass-1.9 (AD /
-LDAP distinguished name) + pass-2 substitution (full substring
-substitution applied to every QSTRING AND every BAREWORD regardless of
-TMSH context) + AES-256-GCM answer file + obfuscate/deobfuscate CLI +
-leak detector with `--strict`. Object
-scope: LTM pool / virtual / node / monitor / rule / partition /
-profile / data-group / snat / snatpool / virtual-address, GTM pool /
-wideip / server / datacenter / region, net vlan / route-domain / self
-/ trunk, APM policy / profile, security firewall policy / rule-list /
-address-list / port-list; bare IPv4/IPv6 literals; **QSTRING, bareword
-AND braced descriptions**; **Tcl `#` comments inside `ltm rule`
-bodies**; **identifier substring substitution inside every QSTRING AND every
-BAREWORD** (paths, IPs, partitions, AD DNs uniformly, including IPs
-embedded in compound URL-shaped barewords and IP ranges like
-`10.0.0.1-10.0.0.50`). gtm topology, net interface, security dos,
-apm aaa/sso/acl, full ASM coverage, `auth remote-role role-info`
-header paths, internal-FQDN discovery, and QSTRING-wrapped header
-paths (bot-defense signatures) still pending — v1.2+ scope.
+Status: v1.2.2 — pass-1 (top-level path discovery) + pass-1.5 (IP
+literal interning with field-name allowlist) + pass-1.7 (description
+QSTRING / bareword / braced) + pass-1.8 (iRule `#` comment) + the
+pass-1.85 family (v1.2 leak-coverage hardening — sys snmp / syslog /
+sshd bodies, cert-key-chain / client-policy nested buckets, identity /
+LDAP filter / SAML+OAuth / monitor recv / data-group records / APM
+variable-assign literal field walkers) + the pass-1.85i.1 / 1.85k.1 /
+1.85n / 1.95 / 2.0 / 2.2 / 2.25 family (v1.2.1 leak-coverage hardening
+— AD non-standard `query-attrname`, non-monitor URL-bearing fields
+(`uri`, `request-value`, `application-uri`) + `MONITOR_PATH` paths,
+timestamp year-coarsening, iRule TCL QSTRING-literal shapes
+(NETBIOS / FQDN / email / UNC / IPv4), APM `session.custom.<word>`
+namespace tokenization, iRule TCL identifier rewrites embedding a
+`SESSION_NS` vendor word) + pass-1.9 (AD / LDAP distinguished name) +
+pass-2 substitution (full substring substitution applied to every
+QSTRING AND every BAREWORD regardless of TMSH context, with the v1.2.1
+T7 short-literal filter excluding pure-digit ≤ 3 originals) +
+AES-256-GCM answer file + obfuscate/deobfuscate CLI + leak detector
+with `--strict`. Object scope: LTM pool / virtual / node / monitor /
+rule / partition / profile / data-group / snat / snatpool /
+virtual-address, GTM pool / wideip / server / datacenter / region,
+net vlan / route-domain / self / trunk, APM policy / profile /
+oauth-claim / oauth-scope / session-namespace / variable-assign,
+security firewall policy / rule-list / address-list / port-list;
+bare IPv4/IPv6 literals (also inside monitor `send` / `recv` QSTRING
+bodies from v1.2.2); **QSTRING, bareword AND braced descriptions**;
+**Tcl `#` comments inside `ltm rule` bodies**; **identifier substring
+substitution inside every QSTRING AND every BAREWORD** (paths, IPs,
+partitions, AD DNs uniformly, including IPs embedded in compound URL-
+shaped barewords and IP ranges like `10.0.0.1-10.0.0.50`). gtm
+topology, net interface, security dos, full ASM coverage, and
+QSTRING-wrapped header paths (bot-defense signatures) still pending —
+v1.3+ scope.
 
 ## Goal
 
@@ -118,6 +132,11 @@ substring sub) handles the mutation.
 | 1.85l | `data_group_records_discovery.py` | `records` bucket headers inside `ltm data-group internal/external` — context-gated so public-TLD records get caught |
 | 1.85m | `apm_var_literal_discovery.py` | `expression "return {LITERAL}"` Tcl pattern in APM `variable-assign` bodies |
 
+Pass 1.7 (`description_discovery.py`) was extended in v1.2.1 (T1A)
+to walk `apm oauth oauth-claim` and `apm oauth oauth-scope` block
+bodies so `claim-description` / `scope-description` free-text
+values intern as `Kind.DESC` rather than passing through.
+
 Pass 1.9 (`ad_dn_discovery.py`, AD/LDAP DN extraction inside
 QSTRINGs) and pass 2.0 (`fqdn_discovery.py`, internal-FQDN
 discovery) predate v1.2 but were extended in v1.2: pass 1.9 added
@@ -125,6 +144,37 @@ a bareword pass-B for `base-dn` / `search-base-dn` / `search-dn`
 fields and relaxed the qualifier to accept OU+DC-only DNs;
 pass 2.0 collaborates with pass-1.85j via longest-match-first
 during substring sub.
+
+### v1.2.1 / v1.2.2 leak-coverage hardening passes
+
+A second wave of walkers added across the v1.2.1 cycle, driven by
+a cold-read red-team of the v1.2 sanitized output. Each walker
+either extends an existing pass-1.85 walker file or introduces a
+new one. Pass numbers are inserted into the existing 1.85 family
+order so longest-match-first substring sub works correctly.
+
+| Pass | Tier | File | Closes |
+|------|------|------|--------|
+| 1.85i.1 | T3A | `ad_query_attrname_discovery.py` (new) | non-standard AD `query-attrname` values inside `apm aaa active-directory` and `apm policy agent aaa-active-directory` blocks → `Kind.AD_ATTR` (standard schema attrs like `sAMAccountName`, `memberOf` allowlisted; length floor of 4 chars for non-allowlist attrs to keep substring-sub safe) |
+| 1.85k.1 | T2 / T8 | `monitor_path_discovery.py` (new) | monitor `send` HTTP request-line URL paths, `success-match-value` URL-shaped values, plus the non-monitor URL-bearing fields `uri` / `request-value` / `application-uri` → `Kind.MONITOR_PATH`. Small allowlist (`/`, `/index.html`, `/login`, `/health`, ...) passes through. Full URLs (`https://host/path`) intern as ONE entry (host + path together) so substring sub's strict left-boundary check passes. Skips values already interned by the SAML/OAuth walker to avoid orphan sub-entries. **v1.2.2 extends this walker (`_intern_ipv4_in_qstring`) to scan QSTRING bodies for IPv4 literals (with optional CIDR) gated on `send` / `recv` field names — IPs intern via `Ledger.intern_ipaddr` → RFC 5737 docs-range substitution; CIDR mask preserved literal.** |
+| 1.85n | T3B | `timestamp_discovery.py` (new) | `creation-time` / `last-modified-time` values coarsen to `YYYY-01-01:00:00:00` via `Ledger.intern_timestamp` → `Kind.TIMESTAMP`. Year preserved as low-fidelity operational signal; month/day/time generalized. Format-preserving so TMSH parsers still accept. Collision disambiguation uses the seconds slot. |
+| 1.95 | T4 | `irule_tcl_literal_discovery.py` (new) | QSTRING bodies inside `ltm rule` / `apm policy *` / `apm sso *` blocks scanned for five shape classes: NETBIOS domain prefix (`CORP\\`) → `Kind.AD_NETBIOS`; permissive FQDN (any TLD, 3+ labels — catches SaaS tenant subdomains like `api-xxxxxxxx.duosecurity.com` that the strict pass-2.0 walker skips); email → `Kind.USERNAME`; UNC `\\server\share` → `Kind.UNC_PATH`; IPv4 literal with optional CIDR (catches IPs hardcoded inside TCL `expression` bodies that the bare-token IP walker misses). Runs BEFORE pass 2.0 FQDN. |
+| 2.2 | T1B | `apm_session_var_discovery.py` (new) | `session.custom.<word>.<rest>` and `session.<non-builtin>.<rest>` user-chosen namespace segments → `Kind.SESSION_NS`. Placeholder vocab is the canonical 13-word metasyntactic set (`foo`, `bar`, `baz`, `qux`, `quux`, `corge`, `grault`, `garply`, `waldo`, `fred`, `plugh`, `xyzzy`, `thud`) — visually distinct from `KIND_NNNN` so reviewers spot org-namespace redactions at a glance. Overflow past 13 reuses the vocab with `_NN` suffixes. |
+| 2.25 | T5 | `irule_tcl_literal_discovery.py` (shared file, separate pass) | WORD tokens inside iRule-context bodies scanned for TCL identifiers that EMBED a `SESSION_NS` vendor word as an identifier-bounded substring (`static::jwt_<vendor>_debug` → `static::jwt_<vocab>_debug`, `<vendor>_logon_form` → `<vocab>_logon_form`) → `Kind.IRULE_IDENT`. Custom render path: the placeholder IS the rewritten identifier text, not a `KIND_NNNN` token. Runs AFTER pass 2.2 so vendor words are interned first. iRule-context header allowlist: `ltm rule`, `apm policy <any-subtype>` (3-word generic), `apm policy agent <subtype>` (4-word matched BEFORE the 3-word generic so agent subtypes aren't shadowed), `apm sso <subtype>` (3-word). |
+
+**T6 (APM customization-form child blocks)** auto-closed by T5 +
+the `apm sso <subtype>` allowlist extension — no separate walker
+needed.
+
+**T7 (substring-sub short-literal exclusion, v1.2 over-fire fix)**
+lives in `substitute.py`'s `_build_substring_render_map`: pure-digit
+originals of length ≤ 3 are filtered from the substring-sub map.
+Pre-v1.2.1, an `expression "return {1}"` interned `1` as
+`APM_VAR_LITERAL_0001`, and the substring sub over-fired on every
+standalone `1` in source, corrupting `version 17.5.1.5` to
+`version 17.5.APM_VAR_LITERAL_0001.5`. Filter is narrow on
+purpose — alphabetic shorts (`acme`, `admin`, `Secret`) still
+substring-sub because they're legitimate customer secrets.
 
 ### Pass 2 — substitution (`veil.substitute.substitute`)
 
@@ -257,6 +307,21 @@ for the per-walker rationale.
 | `MONITOR_RECV` | `MONITOR_RECV_0001` | value of `recv` field inside `ltm monitor` blocks |
 | `DATA_GROUP_RECORD` | `DATA_GROUP_RECORD_0001` | record bucket headers inside `ltm data-group internal/external` records bodies — operator-chosen lookup keys |
 | `APM_VAR_LITERAL` | `APM_VAR_LITERAL_0001` | LITERAL extracted from `expression "return {LITERAL}"` Tcl pattern in `apm policy agent variable-assign` bodies |
+
+### v1.2.1 / v1.2.2 leak-coverage kinds
+
+Added by the v1.2.1 hardening cycle and the v1.2.2 monitor IPv4
+patch. See `CHANGELOG.md` for the per-walker rationale.
+
+| Kind | Placeholder | Example original / context |
+|------|-------------|------------------|
+| `AD_ATTR` | `AD_ATTR_0001` | non-standard AD attribute value of `query-attrname` (e.g. `homeMDB`, `msDS-ResultantPSO`, `extensionAttribute1`); standard schema attrs allowlisted |
+| `AD_NETBIOS` | `AD_NETBIOS_0001` | NETBIOS domain prefix `CORP\\` inside iRule TCL QSTRINGs |
+| `UNC_PATH` | `UNC_PATH_0001` | UNC path `\\server\share` inside iRule TCL QSTRINGs |
+| `TIMESTAMP` | `YYYY-01-01:00:00:00` (custom rendered form, NOT `TIMESTAMP_NNNN`) | `creation-time 2024-03-17:14:32:08` → `2024-01-01:00:00:00`. Format-preserving for TMSH parsers. Collision disambiguation via seconds-slot increment. |
+| `IRULE_IDENT` | rewritten identifier text (custom render path) | `static::jwt_grafana_debug` → `static::jwt_grault_debug`; `grafana_logon_form` → `grault_logon_form` (vendor word swapped for the SESSION_NS vocab token interned at pass 2.2) |
+| `SESSION_NS` | one of the 13-word metasyntactic vocab (`foo`, `bar`, `baz`, `qux`, `quux`, `corge`, `grault`, `garply`, `waldo`, `fred`, `plugh`, `xyzzy`, `thud`); overflow uses `<word>_NN` | user-chosen segment in `session.custom.<word>.<rest>` or `session.<non-builtin>.<rest>` |
+| `MONITOR_PATH` | `MONITOR_PATH_0001` | monitor `send` HTTP request-line URL path (`/NMC/...`, `/vdesk/...`, `/zabbix/...`); `success-match-value`, `uri`, `request-value`, `application-uri` values. Full URLs (`https://host/path`) intern as ONE entry (host+path) for substring-sub left-boundary correctness. v1.2.2: IPv4 literals inside `send` / `recv` QSTRING bodies additionally intern via `Ledger.intern_ipaddr` (RFC 5737 substitution, CIDR mask preserved literal). |
 
 ### Counter format
 
@@ -424,28 +489,64 @@ non-empty reports require operator review. The IPv4 / IPv6 / MAC / FQDN
 checks are deterministic; the `IDENTIFIER_BAREWORD` heuristic intentionally
 errs toward noise rather than miss a real customer label.
 
-## v0.1 module map
+## Module map (v1.2.2)
 
 ```
 src/veil/
-  __init__.py        package version
+  __init__.py        package version (1.2.2)
   __main__.py        entry point — re-exports cli.main
   cli.py             argparse, obfuscate/deobfuscate commands, exit codes
-  ledger.py          Kind, Ref, LedgerEntry, Ledger, COMMON_PARTITION
+  ledger.py          Kind, Ref, LedgerEntry, Ledger, COMMON_PARTITION,
+                     intern_ipaddr / intern_timestamp / intern_irule_ident
   tokenizer.py       Token, TokKind, tokenize(src)
   diagnostics.py     Diagnostics (shared by scanner + substitute)
-  scanner.py         scan(src) -> (Ledger, Diagnostics)
-                     (drives pass 1 + invokes pass 1.5 before freeze)
-  ip_discovery.py    discover_ip_literals(src, ledger, diag)
-                     (pass 1.5 — bare IP literal interning)
+  scanner.py         scan(src) / scan_many(...) -> (Ledger, Diagnostics)
+                     (drives pass 1 + dispatches pass 1.5 / 1.7 / 1.8 /
+                     1.85.* / 1.9 / 1.95 / 2.0 / 2.1 / 2.2 / 2.25
+                     before freeze)
+  ip_discovery.py    discover_ip_literals (pass 1.5 — bare IP literal
+                     interning, with version-field allowlist exclusion)
   description_discovery.py
-                     discover_descriptions(src, ledger, diag)
-                     (pass 1.7 — QSTRING / bareword description redaction)
-  substitute.py      substitute(src, ledger, diag), reverse_substitute(...)
+                     discover_descriptions (pass 1.7 — QSTRING / bareword
+                     / braced description redaction + v1.2.1 oauth-claim /
+                     oauth-scope extension)
+  irule_comment_discovery.py    pass 1.8 — Tcl `#` comments inside `ltm rule` bodies
+  remote_role_discovery.py      pass 1.85 — auth remote-role role-info
+  snmp_discovery.py             pass 1.85b — sys snmp body
+  syslog_discovery.py           pass 1.85c — sys syslog remote-servers
+  sshd_discovery.py             pass 1.85d — sys sshd banner-text
+  cert_keychain_discovery.py    pass 1.85e — nested cert-key-chain buckets
+  client_policy_discovery.py    pass 1.85f — nested client-policy buckets
+  username_discovery.py         pass 1.85g — identity / hostname fields → USERNAME
+  krb_realm_discovery.py        pass 1.85h / 2.1 — uppercase Kerberos realms
+  ldap_filter_discovery.py      pass 1.85i — LDAP filter field
+  ad_query_attrname_discovery.py
+                                pass 1.85i.1 — AD non-standard query-attrname (v1.2.1, T3A)
+  saml_oauth_discovery.py       pass 1.85j — SAML / OAuth identifier fields
+  monitor_recv_discovery.py     pass 1.85k — monitor recv field
+  monitor_path_discovery.py     pass 1.85k.1 — monitor send / URL-bearing field
+                                paths (v1.2.1, T2 / T8) + IPv4-in-QSTRING
+                                scan for send / recv (v1.2.2, B5)
+  data_group_records_discovery.py
+                                pass 1.85l — data-group records buckets
+  apm_var_literal_discovery.py  pass 1.85m — APM variable-assign LITERAL pattern
+  timestamp_discovery.py        pass 1.85n — creation-time / last-modified-time
+                                year-coarsening (v1.2.1, T3B)
+  ad_dn_discovery.py            pass 1.9 — AD/LDAP distinguished name extraction
+  irule_tcl_literal_discovery.py
+                                pass 1.95 / 2.25 — iRule TCL QSTRING shapes (T4)
+                                + iRule TCL identifier rewrites (T5) (v1.2.1)
+  fqdn_discovery.py             pass 2.0 — internal-FQDN discovery
+  apm_session_var_discovery.py  pass 2.2 — APM session.custom.<word> namespace
+                                tokenization → SESSION_NS (v1.2.1, T1B)
+  substitute.py      substitute(src, ledger, diag), reverse_substitute(...);
+                     `_build_substring_render_map` with T7 short-literal
+                     filter (v1.2.1)
   answer_file.py     write_answer_file(...), read_answer_file(...),
                      AnswerFileError
   leak_detector.py   scan_leaks(sanitized) -> LeakReport,
                      LeakKind, Leak
+  ucs_archive.py     UCS extract-only ingestion (v1.2)
 ```
 
 ## CLI semantics
@@ -706,33 +807,96 @@ recorded `sources` list in the answer file.
   - **Orphan check** — substring-shadow exemption so the FQDN
     walker's inner-FQDN entries shadowed by longer SAML/OAuth
     entries don't trip the cross-reference integrity assertion.
-- **v1.2 documented gaps (NOT auto-redacted, operator review
-  required):**
-  - **iRule `varname` / variable name customer leak** — user-chosen
-    Tcl variable names (e.g. `set acme_session_id ...`) can embed
-    company names. Renaming would break positional references
-    inside the iRule, so VEIL does not redact varnames automatically.
-    Operator-side mitigation: review variable names before sending
-    sanitized config to an LLM; rename in source config if needed.
+- **v1.2 documented gaps (status update from the v1.2.1 cycle):**
+  - **iRule `varname` / variable name customer leak** —
+    PARTIALLY CLOSED in v1.2.1 by T5 / `IRULE_IDENT` for the case
+    where the vendor word also appears in a `session.custom.<vendor>.*`
+    anchor (T1B / `SESSION_NS` interns the word, T5 rewrites every
+    identifier that embeds it). Pure `static::<vendor>_*` variables
+    whose vendor never appears in a session-namespace anchor still
+    leak — tracked as a v1.3 gap below.
   - **Public-TLD FQDNs outside data-group records context.** The
-    global FQDN walker only catches internal-suffix FQDNs
-    (`.local`, `.corp`, `.lan`, etc.) to avoid false positives on
-    legitimate public DNS references (CDN, SaaS endpoints).
-    Customer FQDNs with public TLDs in fields not covered by the
-    Phase 2 dedicated walkers (entity-id, audience, etc.) — for
-    example a `source-path /config/ssl/ssl.csr/<fqdn>.com` value —
-    pass through. Operator-side mitigation: review sanitized output
-    for known customer-domain root-labels.
-  - **Tcl expression literal customer-domain leak.** iRule
-    expression QSTRINGs like `expression "return {acme}"` where
-    `{acme}` is a literal Tcl variable reference to a customer
-    domain root-label fall outside the regex / FQDN / substring
-    machinery (no dotted-suffix shape to lock onto). Operator-side
-    mitigation: review expression bodies.
-  - **`basic-auth-realm` bareword.** Single-word values in the
-    `basic-auth-realm` field can leak company / tenant names; not
-    in the v1.2 USERNAME walker's allowlist (added in v1.3 if a
-    real-world report surfaces).
+    global FQDN walker still only catches internal-suffix FQDNs
+    by design. v1.2.1's T4 (`irule_tcl_literal_discovery`) added
+    permissive-FQDN coverage **inside iRule TCL QSTRINGs** (catches
+    SaaS tenant subdomains like `api-xxxxxxxx.duosecurity.com`).
+    Public-TLD FQDNs outside cert-path / SAML / iRule-TCL contexts
+    still need operator review.
+  - **Tcl expression literal customer-domain leak.** CLOSED for the
+    `{LITERAL}` pattern shape by v1.2's `APM_VAR_LITERAL` walker.
+    Free-text expression bodies (`expression "[mcget {...}]"`)
+    without a recognized shape still pass through.
+  - **`basic-auth-realm` bareword.** CLOSED in v1.2 — folded into
+    the USERNAME walker's allowlist.
+
+- **v1.2.1 documented gaps (NOT auto-redacted, operator review
+  required, deferred to v1.3):**
+  - **Vendor names in TCL identifiers without a `session.*`
+    anchor.** T5 catches embedded vendor words only when they're
+    already interned by T1B's `SESSION_NS` walker (via
+    `session.custom.<vendor>.*` references). Pure `static::<vendor>_*`
+    variables whose vendor never appears in a session-namespace
+    anchor (e.g. `static::<vendor>_302_307_replacement_debug`)
+    survive in v1.2.1. v1.3 candidate fixes: (A) hand-curated
+    vendor-word list, or (B) extend T5 to harvest candidate vendor
+    words from partition names / comment bodies / data-group key
+    prefixes elsewhere in the config.
+  - **Hardcoded TCL string literals / secrets in `proc` returns.**
+    High-entropy alphanumeric tokens (OAuth `client_id` shapes),
+    magic SAML markers (e.g. literal `"Canary"` strings), and other
+    customer-specific hardcoded literals inside iRule `proc` bodies
+    aren't caught by T4's shape detectors (not FQDN / IP / NETBIOS /
+    email / UNC). New `Kind.IRULE_SECRET` candidate; walker design
+    pending — likely a combination of field-gated scanning (`set
+    <varname> "<literal>"` where varname matches `*_secret` /
+    `*_token` / `*_key` / `*_id` / `*_password` patterns) plus an
+    entropy-threshold catch-all for high-entropy strings of length
+    > 12.
+  - **`DATA_GROUP_RECORD` substring sub over-fires on common
+    English / geographic terms.** Symptom: `time-zone
+    DATA_GROUP_RECORD_0006/Central` and similar — the data-group
+    records walker captured `America` as a record key, substring
+    sub then fires on the unrelated `America` in the `time-zone`
+    field. Round-trip preserved (reverse map restores), but
+    sanitized output is structurally weird. Fix is at the walker
+    level (skip-list of common English / geographic / operational
+    terms — `America`, `Central`, `Eastern`, `Western`, `Pacific`,
+    `Mountain`, `Atlantic`, `Indian`, `Africa`, `Asia`, `Europe`,
+    `Australia`, `Antarctica`, ...) — `substitute.py` T7 path is
+    too coarse for this class.
+  - **Citrix product-paths in factory vs user-named data-groups.**
+    v1.2 / v1.2.1 final-round subagent flagged `/Citrix/Store/PNAgent/...`
+    records. Verdict depends on whether the parent data-group name is
+    `/Common/__Citrix_*` factory-style (dismiss) or user-named
+    (escalate). Triage in v1.3.
+
+- **B5 CLOSED in v1.2.2 (2026-06-20).** Post-v1.2.1 red-team found
+  `192.168.100.1` surviving inside a monitor `send` QSTRING:
+  `send "GET / HTTP/1.1\r\nHost: 192.168.100.1\r\nConnection: Close\r\n\r\n"`.
+  Cause: T2 `monitor_path_discovery` parsed the URL path but didn't
+  scan QSTRING content for IPs; the strict pass-1.5 IP walker only
+  scans bare WORD tokens. Fix: added `_intern_ipv4_in_qstring` to
+  `monitor_path_discovery`, gated on `send` / `recv` field names.
+  IPv4 literals (with optional CIDR) intern via
+  `Ledger.intern_ipaddr` → RFC 5737 docs-range substitution. CIDR
+  mask preserved literal. Verified on integration corpus.
+
+- **B6 DISMISSED (2026-06-20).** Post-release red-team flagged 14
+  public-TLD vendor FQDNs in `net dns-resolver` forward-zones and
+  `security bot-defense signature` factory rules. Full triage:
+  11 are F5 stock bot-detection signatures for legitimate search-
+  engine crawlers (Google / Yahoo / Bing / Yandex / etc.) with
+  `factory-rule $M$...` + `user-defined false` attributes —
+  dismissable per the existing v1.2 bot-defense-factory rule;
+  3 are F5 stock `/Common/f5-aws-dns` resolver entries
+  (`amazonaws.com`, `idservice.net`, `shpapi.com`). The other
+  dns-resolver block in the corpus is user-configured and its
+  internal FQDN tokenizes correctly via the existing FQDN walker.
+  Walker implication: any future `dns-resolver forward-zone` walker
+  MUST exempt `f5-` prefixed resolver names (and any other F5-stock
+  prefixes: `default-*`, `_sys_*`, `__*`) to avoid breaking stock
+  data. Hold the walker until a corpus surfaces a user-created
+  public-TLD forward-zone case.
 - **Personal-use Docker + FastAPI web wrapper** (v1.3). See threat
   model below for why this is distinct from a hardened service.
 - **Persistent cross-run identifier map** (v2.0).
