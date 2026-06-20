@@ -247,6 +247,67 @@ def test_recv_still_redacts():
     assert "MONITOR_RECV_0001" in sanitized
 
 
+# ----- v1.2.2 B5: IP literals inside send/recv QSTRING bodies ------------
+
+
+def test_send_host_header_ip_redacted():
+    # v1.2.1 final red-team trigger: ``Host: 192.168.100.1`` survived
+    # inside a monitor ``send`` QSTRING. The IP walker doesn't descend
+    # into QSTRING content; T2 only parses the request line URL path.
+    src = (
+        'ltm monitor http /Common/mon1 {\n'
+        '    send "GET / HTTP/1.1\\r\\nHost: 192.168.100.1\\r\\n\\r\\n"\n'
+        '}\n'
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "192.168.100.1" not in sanitized
+    # Substituted to RFC 5737 docs range.
+    assert "192.0.2." in sanitized or "198.51.100." in sanitized or "203.0.113." in sanitized
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_send_request_line_ip_redacted_alongside_path():
+    src = (
+        'ltm monitor http /Common/mon1 {\n'
+        '    send "GET /healthz HTTP/1.1\\r\\nHost: 10.20.30.40\\r\\n\\r\\n"\n'
+        '}\n'
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "10.20.30.40" not in sanitized
+    # /healthz is allowlisted commodity path → passes through; the
+    # IP is the load-bearing redaction here.
+    restored = reverse_substitute(sanitized, ledger)
+    assert restored == src
+
+
+def test_recv_qstring_ip_redacted():
+    src = (
+        'ltm monitor http /Common/mon1 {\n'
+        '    recv "Server reachable at 172.16.5.10"\n'
+        '}\n'
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "172.16.5.10" not in sanitized
+
+
+def test_send_ip_with_cidr_suffix_preserves_mask():
+    src = (
+        'ltm monitor http /Common/mon1 {\n'
+        '    send "GET / HTTP/1.1\\r\\nX-Subnet: 10.0.0.0/24\\r\\n\\r\\n"\n'
+        '}\n'
+    )
+    ledger, diag = scan(src)
+    sanitized, _ = substitute(src, ledger, diag)
+    assert "10.0.0.0" not in sanitized
+    # CIDR suffix preserved literal — mask value isn't customer-
+    # identifying.
+    assert "/24" in sanitized
+
+
 # ----- T8: non-monitor URL-bearing fields ---------------------------------
 
 

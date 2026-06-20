@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "f5-veil"
-version = "1.2.1"
+version = "1.2.2"
 description = "F5 BIG-IP config obfuscator/de-obfuscator — sanitize customer configs for safe AI analysis"
 readme = "README.md"
 requires-python = ">=3.10"

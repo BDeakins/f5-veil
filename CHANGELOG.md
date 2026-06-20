@@ -5,6 +5,32 @@ All notable changes to **f5-veil** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] — 2026-06-20
+
+Patch release — single CRITICAL fix found in the post-v1.2.1
+red-team round.
+
+### Fixed
+
+- **B5 — Real private IP surviving in monitor `send` / `recv`
+  QSTRING bodies.** `Host: 192.168.100.1` (and similar embedded
+  IPs in monitor HTTP request headers) survived through v1.2.1.
+  Root cause: T2's `monitor_path_discovery` parsed the URL path
+  out of the request line but didn't scan the QSTRING for IP
+  literals; the strict pass-1.5 IP walker only scans bare WORD
+  tokens, not QSTRING content. Fix: added `_intern_ipv4_in_qstring`
+  to `monitor_path_discovery`, gated on `send` and `recv` field
+  names. IP literals (with optional CIDR suffix) inside those
+  QSTRINGs intern via `Ledger.intern_ipaddr` → RFC 5737 docs-range
+  substitution. CIDR mask preserved literal.
+
+### Test coverage
+
+- 759 tests passing (755 → +4 B5 tests). Real-corpus integration
+  pair byte-exact round-trip preserved. Final post-fix red-team
+  pass on `_phase_verify/v121_final/`: zero in-scope CRITICAL
+  findings remaining.
+
 ## [1.2.1] — 2026-06-20
 
 Patch release — leak-coverage hardening cycle driven by a

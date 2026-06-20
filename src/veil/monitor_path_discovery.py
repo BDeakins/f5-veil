@@ -43,10 +43,24 @@ noise without redacting anything identifying.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 
 from .ledger import Kind, Ledger, Ref
 from .tokenizer import Token, TokKind, tokenize
+
+
+# v1.2.2 — IPv4 literal (with optional CIDR) inside ``send`` / ``recv``
+# QSTRING bodies. Catches the ``Host: 192.168.100.1`` shape that
+# survived through v1.2.1 (T2 parses the request line but doesn't
+# walk header values; the strict pass-1.5 IP walker doesn't descend
+# into QSTRING content).
+_IPV4_IN_QSTRING_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    r"(?P<ip>(?:\d{1,3}\.){3}\d{1,3})"
+    r"(?:/\d{1,2})?"
+    r"(?![A-Za-z0-9_-])"
+)
 
 
 # Commodity URL paths that pass through verbatim. Tokenizing these
@@ -114,6 +128,11 @@ def discover_monitor_paths(
         if tk.kind == TokKind.WORD and i + 1 < n:
             if tk.value == "send":
                 _intern_send_path(tokens[i + 1], ledger)
+                _intern_ipv4_in_qstring(tokens[i + 1], ledger)
+                i += 2
+                continue
+            if tk.value == "recv":
+                _intern_ipv4_in_qstring(tokens[i + 1], ledger)
                 i += 2
                 continue
             if tk.value == "success-match-value":
@@ -255,6 +274,41 @@ def _is_url_shaped(value: str) -> bool:
     if value.startswith("/"):
         return True
     return bool(_FULL_URL_RE.match(value))
+
+
+def _intern_ipv4_in_qstring(value_tok: Token, ledger: Ledger) -> None:
+    """v1.2.2 — scan a ``send`` / ``recv`` QSTRING content for IPv4
+    literals (with optional CIDR) and intern via
+    :meth:`Ledger.intern_ipaddr`. Catches IPs embedded in HTTP
+    request headers (``Host: 10.0.0.1``) that T2's request-line
+    parser misses and the strict pass-1.5 IP walker doesn't reach
+    (QSTRING content). CIDR suffix is left literal — mask values
+    aren't customer-identifying."""
+    if value_tok.kind != TokKind.QSTRING:
+        return
+    if len(value_tok.value) < 2:
+        return
+    content = value_tok.value[1:-1]
+    if not content:
+        return
+    content_start = value_tok.offset + 1
+    for m in _IPV4_IN_QSTRING_RE.finditer(content):
+        ip_str = m.group("ip")
+        try:
+            ipaddress.IPv4Address(ip_str)
+        except ipaddress.AddressValueError:
+            continue
+        if (Kind.IPADDR, ip_str) in ledger.by_original:
+            continue
+        ref = Ref(
+            byte_offset=content_start + m.start("ip"),
+            length=len(ip_str),
+            line=value_tok.line,
+        )
+        try:
+            ledger.intern_ipaddr(ip_str, ref)
+        except (ValueError, RuntimeError):
+            continue
 
 
 def _is_already_full_url_interned(value: str, ledger: Ledger) -> bool:
