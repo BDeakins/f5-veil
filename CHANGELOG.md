@@ -121,8 +121,8 @@ substring-sub heuristic fix.
 
 ### Test coverage
 
-- 754 tests passing (660+ baseline → 755 after the v1.2.1 cycle;
-  net +94 across T1A/T1B/T2/T3A/T3B/T4/T5/T7/T8).
+- 755 tests passing (660+ v1.2.0 baseline → 755 after the v1.2.1
+  cycle; net +94 across T1A/T1B/T2/T3A/T3B/T4/T5/T7/T8).
 - Real-corpus integration pair byte-exact round-trip preserved.
 - Final red-team subagent pass on `_phase_verify/v121_final/`:
   zero CRITICAL findings in scope. Remaining advisory items (F5
