@@ -1,5 +1,11 @@
 # f5-veil Architecture
 
+License: AGPL-3.0-or-later from v1.3.0 onward — see [LICENSE](../LICENSE)
+and [DISCLAIMER.md](../DISCLAIMER.md). v1.3.0 is a license-change-only
+release with no functional changes versus v1.2.2; the pass structure
+described below is unchanged. Release artifacts at or below v1.2.2
+remain MIT.
+
 Status: v1.2.2 — pass-1 (top-level path discovery) + pass-1.5 (IP
 literal interning with field-name allowlist) + pass-1.7 (description
 QSTRING / bareword / braced) + pass-1.8 (iRule `#` comment) + the

@@ -59,6 +59,13 @@ placeholder text the AI produced in new content it wrote.
 
 ## Status
 
+**v1.3.0** — license change MIT → AGPL-3.0-or-later. No functional
+changes versus v1.2.2; every module, walker, and test under
+`src/veil/` and `tests/` is byte-identical. See [LICENSE](LICENSE)
+and [DISCLAIMER.md](DISCLAIMER.md). Release artifacts ≤ v1.2.2 (PyPI
+wheels, git commits, tags) remain governed by the MIT License they
+were originally published under.
+
 **v1.2.2** — production-shaped against real BIG-IP configurations.
 
 Covers ~50 object kinds across LTM, GTM, net, APM, sys, security
@@ -126,7 +133,7 @@ pip install f5-veil
 Or pin to the current release:
 
 ```bash
-pip install f5-veil==1.2.2
+pip install f5-veil==1.3.0
 ```
 
 Or from source:
@@ -368,7 +375,10 @@ tripped under `--strict`.
   `monitor_path_discovery` extended to scan QSTRING bodies for
   IPv4 literals (with optional CIDR) gated on `send` / `recv`
   field names. 759 tests pass. Shipped.
-- **v1.3** — Personal-use Docker image + thin FastAPI wrapper around
+- **v1.3** — License change MIT → AGPL-3.0-or-later. No functional
+  changes versus v1.2.2. Code, walkers, and tests are identical.
+  v1.2.x line ends at v1.2.2 under MIT.
+- **v1.4** — Personal-use Docker image + thin FastAPI wrapper around
   the CLI (paste config in browser, get sanitized output and encrypted
   answer file out). RAM-only processing, no auth, **not for internet
   exposure**. CLI remains the canonical distribution. See the threat
@@ -381,7 +391,18 @@ tripped under `--strict`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** — see
+[LICENSE](LICENSE).
+
+If you modify this software and make the modified version available to
+users over a network (e.g. as a hosted service or embedded component
+of a network-accessible product), AGPL-3.0 requires you to offer those
+users the complete corresponding source code of your modified version,
+under AGPL-3.0, on equal terms.
+
+Versions ≤ v1.2.2 (and every git commit prior to the license change)
+were released under the MIT License and remain governed by MIT for
+those release artifacts. AGPL-3.0 applies from v1.3.0 onward.
 
 A personal statement of intent regarding the audience of this work is in
 [DISCLAIMER.md](DISCLAIMER.md). It is not a license term.

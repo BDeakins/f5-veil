@@ -5,6 +5,39 @@ All notable changes to **f5-veil** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-06-22
+
+License change release. **No functional changes versus v1.2.2.**
+
+### Changed
+
+- **License: MIT → GNU Affero General Public License v3.0
+  (AGPL-3.0-or-later).** Full license text in
+  [LICENSE](LICENSE). Key implication: modified versions made
+  available to users over a network must offer source code of the
+  modified version under AGPL-3.0 on equal terms.
+- Release artifacts at or below v1.2.2 (PyPI wheels, git commits,
+  tags) remain governed by the MIT License under which they were
+  originally published. AGPL-3.0 applies from v1.3.0 onward.
+- [DISCLAIMER.md](DISCLAIMER.md) reframed for AGPL: notes the
+  network-use source-disclosure obligation and the MIT cutover at
+  v1.2.2. The personal statement of intent regarding the audience
+  remains explicitly non-binding.
+- `pyproject.toml`: `license = "AGPL-3.0-or-later"` (was `"MIT"`);
+  `version = "1.3.0"`.
+- README "Status" / "Roadmap" / "License" sections updated to
+  reflect the license change and the resulting v1.3 / v1.4
+  renumbering (v1.4 now carries the planned Docker wrapper).
+
+### Unchanged
+
+- Code surface — every module, walker, and test under `src/veil/`
+  and `tests/` is byte-identical to v1.2.2.
+- 759 tests passing. Real-corpus integration-pair byte-exact
+  round-trip preserved.
+- CLI flags, exit codes, answer-file format, AES-256-GCM + scrypt
+  encryption scheme, multi-file / UCS ingestion behaviour.
+
 ## [1.2.2] — 2026-06-20
 
 Patch release — single CRITICAL fix found in the post-v1.2.1
