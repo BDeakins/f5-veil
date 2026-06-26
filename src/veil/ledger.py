@@ -260,7 +260,7 @@ class Kind(str, Enum):
     OAUTH_KEY_ID = "OAUTH_KEY_ID"  # Value of ``key-id`` field inside
     # ``apm oauth jwk-config`` and adjacent JWK/JWT blocks, discovered
     # by pass-1.85j (folded into the SAML/OAuth walker). Typically a
-    # compound bareword identifier (e.g. ``argo_babylon_local``).
+    # compound bareword identifier (e.g. ``argo_example_local``).
     # Stored bare with ``partition=None``; substring-sub renders
     # ``OAUTH_KEY_ID_NNNN``.
     MONITOR_RECV = "MONITOR_RECV"  # Value of ``recv`` field inside

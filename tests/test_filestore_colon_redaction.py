@@ -37,14 +37,14 @@ def test_filestore_cache_path_redacted():
 
 def test_filestore_cert_path_colon_form_redacted():
     src = (
-        "apm aaa kerberos-keytab-file /Common/babylon_kt {\n"
-        "    cache-path /config/filestore/files_d/Common_d/kerberos_keytab_file_d/:Common:babylon_kt_114418_2\n"
+        "apm aaa kerberos-keytab-file /Common/example_kt {\n"
+        "    cache-path /config/filestore/files_d/Common_d/kerberos_keytab_file_d/:Common:example_kt_114418_2\n"
         "    revision 2\n"
         "}\n"
     )
     ledger, diag = scan(src)
     sanitized, _diag = substitute(src, ledger, diag)
-    assert "babylon_kt" not in sanitized
+    assert "example_kt" not in sanitized
     restored = reverse_substitute(sanitized, ledger)
     assert restored == src
 

@@ -2,7 +2,7 @@
 
 Scans the token stream for ``realm <VALUE>`` field pairs where
 ``VALUE`` matches the ALL-UPPERCASE dot-delimited Kerberos realm
-shape (``BABYLON.LOCAL``, ``BOGUS.COM``, ``EXAMPLE.NET``).
+shape (``CORP.LOCAL``, ``BOGUS.COM``, ``EXAMPLE.NET``).
 
 Why a separate walker
 ---------------------

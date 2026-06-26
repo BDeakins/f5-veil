@@ -1,0 +1,27 @@
+name: leak-canary
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  babylon-literal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on babylon literal
+        run: |
+          set -e
+          hits=$(grep -rni 'babylon' \
+            --exclude-dir=.git \
+            --exclude-dir=.github \
+            --exclude=CHANGELOG.md \
+            . || true)
+          if [ -n "$hits" ]; then
+            echo "::error::leak-canary: 'babylon' literal found"
+            echo "$hits"
+            exit 1
+          fi
+          echo "leak-canary: clean"

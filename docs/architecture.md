@@ -1,6 +1,12 @@
 # f5-veil Architecture
 
-Status: v1.2.2 — pass-1 (top-level path discovery) + pass-1.5 (IP
+Status: v1.2.3 — cleanup release on the MIT 1.2.x line (no functional
+change vs. v1.2.2; removes residual homelab-domain literals from test
+fixtures + docstrings + one Kerberos-realm shape example + one inline
+comment, adds a leak-canary CI gate that fails on any case-insensitive
+match for the leaked homelab-domain literal outside `.git/`,
+`.github/`, and `CHANGELOG.md`). Redactor architecture below is
+identical to v1.2.2. — pass-1 (top-level path discovery) + pass-1.5 (IP
 literal interning with field-name allowlist) + pass-1.7 (description
 QSTRING / bareword / braced) + pass-1.8 (iRule `#` comment) + the
 pass-1.85 family (v1.2 leak-coverage hardening — sys snmp / syslog /

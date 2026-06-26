@@ -59,7 +59,10 @@ placeholder text the AI produced in new content it wrote.
 
 ## Status
 
-**v1.2.2** — production-shaped against real BIG-IP configurations.
+**v1.2.3** — production-shaped against real BIG-IP configurations.
+Cleanup release on the MIT 1.2.x line — no functional change, removes
+leftover homelab-domain literals from test fixtures / docstrings and
+adds a leak-canary CI gate. See `CHANGELOG.md` for details.
 
 Covers ~50 object kinds across LTM, GTM, net, APM, sys, security
 firewall, and SAML/OAuth/Kerberos/SNMP/syslog/SSHD bodies. Bare

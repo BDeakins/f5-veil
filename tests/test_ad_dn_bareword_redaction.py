@@ -197,7 +197,7 @@ def test_ou_prefix_dn_qstring_fully_redacted(ous, full_dn):
     placeholder.
 
     Real-corpus example (the trigger): ``base "OU=Service Accounts,
-    OU=User Accounts,DC=Babylon,DC=local"`` inside ``ltm monitor
+    OU=User Accounts,DC=Example,DC=local"`` inside ``ltm monitor
     ldap``."""
     src = (
         "ltm monitor ldap /Common/m {\n"

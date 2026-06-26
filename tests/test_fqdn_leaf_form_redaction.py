@@ -1,8 +1,8 @@
 """v1.2 (post-Phase-3b follow-up) — FQDN-shaped leaf substring sub.
 
 User feedback on phase4a sanitized output: line 22842 leaked
-``source-path /config/ssl/ssl.csr/basestar.babylon.com``. The
-``sys file ssl-csr /Common/basestar.babylon.com`` top-level block
+``source-path /config/ssl/ssl.csr/basestar.example.com``. The
+``sys file ssl-csr /Common/basestar.example.com`` top-level block
 registers the path as UNK, but:
 
 - The source-path value has no ``/Common/`` prefix → slash-form

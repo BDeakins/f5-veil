@@ -5,6 +5,58 @@ All notable changes to **f5-veil** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — 2026-06-26
+
+Cleanup release on the MIT 1.2.x line. No functional changes to the
+redactor; addresses leftover homelab-domain literals (`babylon`) that
+slipped past prior leak-hunts because the canary rule was being
+applied to sanitizer *output*, not to test fixtures, docstrings, and
+inline code comments — all of which still ship to PyPI and the public
+GitHub repo at the release tag.
+
+### Fixed
+
+- **Test fixture leak** — `tests/test_filestore_colon_redaction.py`
+  switched the kerberos-keytab compound bareword fixture from
+  `babylon_kt` to `example_kt`. Same compound-bareword shape, same
+  substring-detector code path, no test-coverage regression.
+- **Docstring leak** — `tests/test_ad_dn_bareword_redaction.py`
+  updated its "real-corpus example" docstring from
+  `DC=Babylon,DC=local` to `DC=Example,DC=local`. DN shape preserved.
+- **Docstring leak** — `tests/test_fqdn_leaf_form_redaction.py`
+  updated its module-level docstring from `basestar.babylon.com` to
+  `basestar.example.com`. FQDN shape preserved.
+- **Inline-comment leak** — `src/veil/ledger.py` `OAUTH_KEY_ID`
+  Kind docstring changed its illustrative compound-bareword example
+  from `argo_babylon_local` to `argo_example_local`. Comment-only.
+- **Docstring leak (5th site, surfaced by the new canary)** —
+  `src/veil/krb_realm_discovery.py` module docstring switched its
+  illustrative Kerberos-realm shape example from `BABYLON.LOCAL` to
+  `CORP.LOCAL`. The two adjacent examples (`BOGUS.COM`, `EXAMPLE.NET`)
+  were already public-safe. `.LOCAL` internal-suffix shape preserved.
+
+### Added
+
+- **Leak-canary GitHub Action** (`.github/workflows/leak-canary.yml`)
+  — fails the build on any case-insensitive `babylon` literal found
+  anywhere outside `.git/`, `.github/`, and `CHANGELOG.md` (which is
+  permitted to retrospectively name the prior leak in release notes).
+  Runs on push to `main` + `release/**`, on every PR, and on manual
+  dispatch. This is the enforcement gate that v1.2.0–v1.2.2 lacked.
+
+### Test coverage
+
+- 759 tests passing (unchanged from v1.2.2). Substitutions exercise
+  the same redactor code paths against neutral, public-safe tokens.
+
+### Licensing
+
+- **MIT (unchanged).** v1.2.3 deliberately stays on the MIT 1.2.x
+  line; v1.3.0 on `main` is the license-only change to
+  AGPL-3.0-or-later. Downstream vendoring that depends on MIT
+  semantics (e.g. embedded use in a proprietary product) should pin
+  to the 1.2.x series.
+
 ## [1.2.2] — 2026-06-20
 
 Patch release — single CRITICAL fix found in the post-v1.2.1
